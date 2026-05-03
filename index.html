@@ -17,6 +17,48 @@
       user-select: none;
     }
 
+    /* ── TIMER ── */
+    #timer {
+      position: absolute; top: 16px; left: 16px;
+      color: rgba(255,255,255,0.85); font-size: clamp(13px, 2.5vw, 18px); font-weight: 700;
+      letter-spacing: 2px; text-shadow: 0 1px 4px rgba(0,0,0,0.8);
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* ── SPEED INDICATOR ── */
+    #speed-indicator {
+      position: absolute; top: 38px; left: 16px;
+      font-size: clamp(10px, 1.8vw, 13px); font-weight: 700;
+      letter-spacing: 1px; text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+      transition: color 0.2s;
+    }
+
+    /* ── COMPASS ── */
+    #compass {
+      position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%);
+      display: flex; flex-direction: column; align-items: center; gap: 3px;
+      opacity: 0; transition: opacity 0.4s;
+    }
+    #compass-arrow {
+      font-size: clamp(20px, 4vw, 28px); line-height: 1;
+      filter: drop-shadow(0 0 6px rgba(255,215,0,0.9));
+      display: inline-block; color: #ffd700;
+      transition: transform 0.15s ease;
+    }
+    #compass-dist {
+      color: rgba(255,215,0,0.8); font-size: clamp(10px, 2vw, 13px);
+      font-weight: 700; letter-spacing: 1px;
+    }
+
+    /* ── LAUNCH MESSAGE ── */
+    #launch-message {
+      position: absolute; top: 28%; left: 50%; transform: translate(-50%,-50%);
+      color: #00e5ff; font-size: clamp(26px, 6vw, 56px); font-weight: 900;
+      text-shadow: 0 0 30px #00e5ff, 0 0 60px rgba(0,229,255,0.5);
+      opacity: 0; pointer-events: none; text-align: center; letter-spacing: 3px;
+      display: none;
+    }
+
     /* ── HEIGHT METER ── */
     #height-meter {
       position: absolute; top: 20px; left: 50%; transform: translateX(-50%);
@@ -226,6 +268,9 @@
   <canvas id="game-canvas"></canvas>
 
   <div id="ui">
+    <div id="timer">0:00</div>
+    <div id="speed-indicator">0 km/h</div>
+
     <div id="height-meter">
       <div id="height-label">0m</div>
       <div id="height-bar-bg"><div id="height-bar-fill"></div></div>
@@ -243,6 +288,13 @@
     <div id="rage-message">SKILL ISSUE</div>
     <div id="zone-announce">ENTERING<span>THE GARDEN</span></div>
     <div id="milestone">100m!</div>
+
+    <div id="compass">
+      <div id="compass-arrow">▲</div>
+      <div id="compass-dist"></div>
+    </div>
+
+    <div id="launch-message">🚀 LAUNCH!</div>
 
     <div id="mobile-controls">
       <div id="joystick-zone"></div>

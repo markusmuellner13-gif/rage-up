@@ -130,6 +130,28 @@ export class Effects {
     }
   }
 
+  spawnLaunchBurst(position) {
+    const colors = [0x00e5ff, 0xffffff, 0x80deea, 0x4fc3f7]
+    for (let i = 0; i < 30; i++) {
+      const geo = new THREE.SphereGeometry(0.14, 5, 5)
+      const mat = new THREE.MeshStandardMaterial({
+        color: colors[i % colors.length],
+        emissive: colors[i % colors.length],
+        emissiveIntensity: 2.0
+      })
+      const mesh = new THREE.Mesh(geo, mat)
+      mesh.position.set(position.x, position.y, position.z)
+      this.scene.add(mesh)
+      const vel = new THREE.Vector3(
+        (Math.random() - 0.5) * 10,
+        Math.random() * 20 + 8,
+        (Math.random() - 0.5) * 10
+      )
+      this.particles.push({ mesh, vel, life: 1.2, maxLife: 1.2, type: 'launch' })
+    }
+    this._flashScreen('rgba(0,230,255,0.35)', 200)
+  }
+
   triggerLightning() {
     this._flashScreen('rgba(200,180,255,0.6)', 80)
     setTimeout(() => this._flashScreen('rgba(200,180,255,0.3)', 60), 120)

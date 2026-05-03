@@ -90,6 +90,7 @@ export class Input {
     const state = {
       forward: fwd, right,
       jump,
+      jumpHeld: !!(this.keys['Space'] || this.touch.jump),
       mouseDx: this.mouse.dx,
       mouseDy: this.mouse.dy
     }
