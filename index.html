@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <title>RAGE UP — The Impossible Climb</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
+    #game-canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
+
+    #ui {
+      position: fixed; inset: 0; pointer-events: none;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      user-select: none;
+    }
+
+    /* ── HEIGHT METER ── */
+    #height-meter {
+      position: absolute; top: 20px; left: 50%; transform: translateX(-50%);
+      display: flex; flex-direction: column; align-items: center; gap: 6px;
+    }
+    #height-label {
+      color: #fff; font-size: clamp(18px, 4vw, 28px); font-weight: 900;
+      text-shadow: 0 0 20px rgba(255,200,0,0.8), 0 2px 4px rgba(0,0,0,0.8);
+      letter-spacing: 2px;
+    }
+    #height-bar-bg {
+      width: clamp(160px, 40vw, 320px); height: 8px; background: rgba(0,0,0,0.5);
+      border-radius: 4px; border: 1px solid rgba(255,255,255,0.3);
+    }
+    #height-bar-fill {
+      height: 100%; background: linear-gradient(90deg, #4caf50, #ffeb3b, #ff5722);
+      border-radius: 4px; transition: width 0.3s ease; width: 0%;
+    }
+
+    /* ── ZONE NAME ── */
+    #zone-name {
+      position: absolute; top: 80px; left: 50%; transform: translateX(-50%);
+      color: rgba(255,255,255,0.7); font-size: clamp(12px, 2.5vw, 16px);
+      font-weight: 600; letter-spacing: 3px; text-transform: uppercase;
+      text-shadow: 0 0 10px rgba(255,255,255,0.5);
+    }
+
+    /* ── STATS (top right) ── */
+    #stats {
+      position: absolute; top: 16px; right: 16px;
+      display: flex; flex-direction: column; align-items: flex-end; gap: 4px;
+    }
+    .stat { color: rgba(255,255,255,0.85); font-size: clamp(11px, 2vw, 14px);
+      font-weight: 600; text-shadow: 0 1px 3px rgba(0,0,0,0.8); }
+    #deaths { color: #ff5252; }
+
+    /* ── CHECKPOINT FLASH ── */
+    #checkpoint-flash {
+      position: absolute; inset: 0; background: rgba(100,255,100,0.25);
+      opacity: 0; pointer-events: none;
+    }
+    #checkpoint-text {
+      position: absolute; top: 45%; left: 50%; transform: translate(-50%,-50%);
+      color: #4cff4c; font-size: clamp(28px, 7vw, 64px); font-weight: 900;
+      text-shadow: 0 0 30px #00ff00, 0 0 60px #00ff00;
+      opacity: 0; pointer-events: none; text-align: center; letter-spacing: 4px;
+    }
+
+    /* ── RAGE MESSAGE ── */
+    #rage-message {
+      position: absolute; top: 38%; left: 50%; transform: translate(-50%,-50%);
+      color: #ff3333; font-size: clamp(22px, 6vw, 52px); font-weight: 900;
+      text-shadow: 0 0 30px #ff0000, 0 0 60px rgba(255,0,0,0.5);
+      opacity: 0; pointer-events: none; text-align: center;
+      letter-spacing: 2px; white-space: nowrap;
+    }
+
+    /* ── ZONE ANNOUNCE ── */
+    #zone-announce {
+      position: absolute; top: 35%; left: 50%; transform: translate(-50%,-50%);
+      color: #fff; font-size: clamp(20px, 5vw, 44px); font-weight: 900;
+      text-shadow: 0 0 40px rgba(255,200,100,0.9);
+      opacity: 0; pointer-events: none; text-align: center; letter-spacing: 4px;
+    }
+    #zone-announce span {
+      display: block; font-size: 0.5em; color: rgba(255,255,255,0.6);
+      letter-spacing: 8px; margin-top: 6px;
+    }
+
+    /* ── MOBILE CONTROLS ── */
+    #mobile-controls {
+      position: absolute; bottom: 0; left: 0; right: 0; height: 200px;
+      display: none; pointer-events: none;
+    }
+    #joystick-zone {
+      position: absolute; bottom: 20px; left: 20px;
+      width: 140px; height: 140px; pointer-events: all;
+    }
+    #jump-btn {
+      position: absolute; bottom: 30px; right: 30px;
+      width: 80px; height: 80px; border-radius: 50%;
+      background: rgba(255,255,255,0.25); border: 3px solid rgba(255,255,255,0.6);
+      color: #fff; font-size: 11px; font-weight: 900; letter-spacing: 1px;
+      cursor: pointer; pointer-events: all;
+      display: flex; align-items: center; justify-content: center;
+      text-shadow: 0 1px 3px rgba(0,0,0,0.5);
+      transition: background 0.1s, transform 0.1s;
+      -webkit-tap-highlight-color: transparent;
+    }
+    #jump-btn:active { background: rgba(255,255,255,0.5); transform: scale(0.92); }
+    #camera-btn {
+      position: absolute; bottom: 30px; right: 130px;
+      width: 60px; height: 60px; border-radius: 50%;
+      background: rgba(200,200,255,0.2); border: 2px solid rgba(255,255,255,0.4);
+      color: rgba(255,255,255,0.7); font-size: 10px; font-weight: 700;
+      cursor: pointer; pointer-events: all;
+      display: flex; align-items: center; justify-content: center;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    /* ── START SCREEN ── */
+    #start-screen {
+      position: absolute; inset: 0; background: rgba(0,0,0,0.88);
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; pointer-events: all;
+      padding: 20px;
+    }
+    #start-screen h1 {
+      color: #fff; font-size: clamp(36px, 10vw, 90px); font-weight: 900;
+      letter-spacing: 4px; text-align: center;
+      text-shadow: 0 0 40px #ff4400, 0 0 80px rgba(255,68,0,0.5);
+      line-height: 1;
+    }
+    #start-screen .subtitle {
+      color: rgba(255,150,50,0.9); font-size: clamp(13px, 3vw, 22px);
+      margin: 12px 0 30px; letter-spacing: 3px; text-transform: uppercase;
+      text-align: center;
+    }
+    #start-screen .instructions {
+      max-width: 480px; background: rgba(255,255,255,0.07);
+      border: 1px solid rgba(255,255,255,0.15); border-radius: 12px;
+      padding: 20px 28px; margin-bottom: 32px;
+    }
+    #start-screen .instructions p {
+      color: rgba(255,255,255,0.8); font-size: clamp(11px, 2.5vw, 15px);
+      line-height: 1.8; text-align: center;
+    }
+    #start-screen .instructions .key {
+      display: inline-block; background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.3); border-radius: 4px;
+      padding: 1px 7px; font-weight: 700; letter-spacing: 0;
+    }
+    #start-btn {
+      background: linear-gradient(135deg, #ff4400, #ff8800);
+      color: #fff; border: none; border-radius: 12px;
+      padding: 16px 48px; font-size: clamp(16px, 4vw, 24px);
+      font-weight: 900; letter-spacing: 3px; cursor: pointer;
+      text-transform: uppercase;
+      box-shadow: 0 0 30px rgba(255,100,0,0.5);
+      transition: transform 0.15s, box-shadow 0.15s;
+    }
+    #start-btn:hover { transform: scale(1.05); box-shadow: 0 0 50px rgba(255,100,0,0.8); }
+    #start-btn:active { transform: scale(0.97); }
+    .warning-text {
+      color: rgba(255,100,100,0.8); font-size: clamp(10px, 2vw, 13px);
+      margin-top: 16px; text-align: center; letter-spacing: 1px;
+    }
+
+    /* ── WIN SCREEN ── */
+    #win-screen {
+      position: absolute; inset: 0; background: rgba(0,0,0,0.9);
+      display: none; flex-direction: column; align-items: center;
+      justify-content: center; pointer-events: all; padding: 20px;
+    }
+    #win-screen h1 {
+      color: #ffd700; font-size: clamp(32px, 9vw, 80px); font-weight: 900;
+      letter-spacing: 4px; text-align: center;
+      text-shadow: 0 0 40px #ffd700, 0 0 80px rgba(255,215,0,0.5);
+      animation: pulse 1s infinite;
+    }
+    @keyframes pulse {
+      0%,100% { text-shadow: 0 0 40px #ffd700, 0 0 80px rgba(255,215,0,0.5); }
+      50% { text-shadow: 0 0 80px #ffd700, 0 0 160px rgba(255,215,0,0.8); }
+    }
+    #win-screen .win-stats {
+      color: rgba(255,255,255,0.85); font-size: clamp(14px, 3vw, 20px);
+      text-align: center; margin: 24px 0; line-height: 2;
+    }
+    #restart-btn {
+      background: linear-gradient(135deg, #4caf50, #2e7d32);
+      color: #fff; border: none; border-radius: 12px;
+      padding: 14px 40px; font-size: clamp(14px, 3vw, 20px);
+      font-weight: 900; letter-spacing: 2px; cursor: pointer;
+      text-transform: uppercase; margin-top: 8px;
+      transition: transform 0.15s;
+    }
+    #restart-btn:hover { transform: scale(1.05); }
+
+    /* ── SCREEN FLASH ── */
+    #screen-flash {
+      position: absolute; inset: 0; pointer-events: none;
+      opacity: 0; background: rgba(255,255,255,0.6);
+    }
+
+    /* ── CONTROLS HINT ── */
+    #controls-hint {
+      position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
+      color: rgba(255,255,255,0.4); font-size: clamp(10px, 2vw, 13px);
+      letter-spacing: 2px; text-align: center; pointer-events: none;
+    }
+
+    /* ── MILESTONE ── */
+    #milestone {
+      position: absolute; top: 30%; left: 50%; transform: translate(-50%,-50%);
+      color: #ffd700; font-size: clamp(24px, 6vw, 56px); font-weight: 900;
+      text-shadow: 0 0 40px #ffd700;
+      opacity: 0; pointer-events: none; text-align: center;
+    }
+
+    @media (max-width: 600px) {
+      #controls-hint { display: none; }
+      #stats { top: 8px; right: 8px; }
+    }
+  </style>
+</head>
+<body>
+  <canvas id="game-canvas"></canvas>
+
+  <div id="ui">
+    <div id="height-meter">
+      <div id="height-label">0m</div>
+      <div id="height-bar-bg"><div id="height-bar-fill"></div></div>
+    </div>
+    <div id="zone-name">THE GARDEN</div>
+
+    <div id="stats">
+      <div class="stat" id="checkpoint-stat">☑ 0 / 20</div>
+      <div class="stat" id="deaths">💀 0</div>
+    </div>
+
+    <div id="screen-flash"></div>
+    <div id="checkpoint-flash"></div>
+    <div id="checkpoint-text">CHECKPOINT!</div>
+    <div id="rage-message">SKILL ISSUE</div>
+    <div id="zone-announce">ENTERING<span>THE GARDEN</span></div>
+    <div id="milestone">100m!</div>
+
+    <div id="mobile-controls">
+      <div id="joystick-zone"></div>
+      <button id="jump-btn">JUMP</button>
+      <button id="camera-btn">CAM</button>
+    </div>
+
+    <div id="controls-hint">
+      WASD / ARROW KEYS — MOVE &nbsp;|&nbsp; SPACE — JUMP &nbsp;|&nbsp; MOUSE — LOOK
+    </div>
+  </div>
+
+  <div id="start-screen">
+    <h1>RAGE UP</h1>
+    <div class="subtitle">The Impossible Climb</div>
+    <div class="instructions">
+      <p>
+        Roll your ball to the <strong>top of the world</strong> — 2000m above.<br/><br/>
+        <span class="key">W A S D</span> or <span class="key">↑ ↓ ← →</span> &nbsp;Roll your ball<br/>
+        <span class="key">SPACE</span> &nbsp;Jump (once per ground contact)<br/>
+        <span class="key">MOUSE</span> &nbsp;Rotate camera<br/><br/>
+        Physics-based movement. <em>Momentum is everything.</em><br/>
+        Fall too far → respawn at last checkpoint.
+      </p>
+    </div>
+    <button id="start-btn">START CLIMBING</button>
+    <p class="warning-text">⚠ Warning: This game may cause extreme frustration. You have been warned.</p>
+  </div>
+
+  <div id="win-screen">
+    <h1>🏆 YOU MADE IT!</h1>
+    <div class="win-stats" id="win-stats"></div>
+    <button id="restart-btn">CLIMB AGAIN</button>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
