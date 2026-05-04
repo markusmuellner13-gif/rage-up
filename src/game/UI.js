@@ -1,51 +1,58 @@
+import * as THREE from 'three'
 import nipplejs from 'nipplejs'
 
 const RAGE_MESSAGES = [
   'SKILL ISSUE', 'JUST LIKE THAT?!', 'REALLY??', 'YOU WERE SO CLOSE!',
-  'TRY AGAIN 🤡', 'PATHETIC', 'NOT EVEN CLOSE', 'GRAVITY WINS AGAIN',
+  'TRY AGAIN', 'NOT EVEN CLOSE', 'GRAVITY WINS AGAIN',
   'L + RATIO + FELL OFF', 'TOUCH GRASS → THEN TRY AGAIN',
-  'THIS IS EMBARRASSING', 'MY GRANDMA CLIMBS FASTER', 'COPE',
-  'THE BALL HAS HAD ENOUGH', 'BACK TO THE CHECKPOINT (YOU\'RE WELCOME)',
-  'HAVE YOU TRIED NOT FALLING?', 'IMAGINE FALLING HERE 💀',
-  'GIT GUD', 'skill diff 😂', 'YOU ALMOST HAD IT... NOT',
+  'THIS IS EMBARRASSING', 'MY GRANDMA CLIMBS FASTER',
+  'THE BALL HAS HAD ENOUGH', 'BACK TO CHECKPOINT (YOU\'RE WELCOME)',
+  'HAVE YOU TRIED NOT FALLING?', 'IMAGINE FALLING HERE',
+  'GIT GUD', 'skill diff', 'YOU ALMOST HAD IT... NOT',
   'THE PHYSICS ARE NOT TO BLAME', 'MAYBE TRY SLOWER?', 'OR FASTER?',
-  'INCREDIBLE. WRONG WAY.', 'CERTIFIED FALLING CHAMPION'
+  'INCREDIBLE. WRONG WAY.', 'CERTIFIED FALLING CHAMPION',
+  'ONE JOB. ONE.', 'HOW?', 'THIS IS FINE. (IT\'S NOT FINE.)',
+  'WOULD A TUTORIAL HELP? LMAO', 'YIKES.',
 ]
 
 export class UI {
   constructor(canvas, input) {
-    this.canvas = canvas
-    this.input = input
-    this.deaths = 0
-    this.checkpointCount = 0
+    this.canvas           = canvas
+    this.input            = input
+    this.deaths           = 0
+    this.checkpointCount  = 0
     this.totalCheckpoints = 0
-    this._milestones = new Set()
-    this._timerStart = null
-    this._elapsed = 0
-    this._bestTime = parseFloat(localStorage.getItem('rage-up-best') || '0')
+    this._milestones      = new Set()
+    this._timerStart      = null
+    this._elapsed         = 0
+    this._bestTime        = parseFloat(localStorage.getItem('rage-up-best') || '0')
 
     this._el = {
-      heightLabel:    document.getElementById('height-label'),
-      heightFill:     document.getElementById('height-bar-fill'),
-      zoneName:       document.getElementById('zone-name'),
-      checkpointStat: document.getElementById('checkpoint-stat'),
-      deathsStat:     document.getElementById('deaths'),
+      heightLabel:     document.getElementById('height-label'),
+      heightFill:      document.getElementById('height-bar-fill'),
+      zoneName:        document.getElementById('zone-name'),
+      checkpointStat:  document.getElementById('checkpoint-stat'),
+      deathsStat:      document.getElementById('deaths'),
       checkpointFlash: document.getElementById('checkpoint-flash'),
-      checkpointText: document.getElementById('checkpoint-text'),
-      rageMsg:        document.getElementById('rage-message'),
-      zoneAnnounce:   document.getElementById('zone-announce'),
-      milestone:      document.getElementById('milestone'),
-      mobileControls: document.getElementById('mobile-controls'),
-      startScreen:    document.getElementById('start-screen'),
-      winScreen:      document.getElementById('win-screen'),
-      winStats:       document.getElementById('win-stats'),
-      timerEl:        document.getElementById('timer'),
-      speedEl:        document.getElementById('speed-indicator'),
-      compassEl:      document.getElementById('compass'),
-      compassArrow:   document.getElementById('compass-arrow'),
-      compassDist:    document.getElementById('compass-dist'),
-      launchMsg:      document.getElementById('launch-message'),
+      checkpointText:  document.getElementById('checkpoint-text'),
+      rageMsg:         document.getElementById('rage-message'),
+      zoneAnnounce:    document.getElementById('zone-announce'),
+      milestone:       document.getElementById('milestone'),
+      mobileControls:  document.getElementById('mobile-controls'),
+      startScreen:     document.getElementById('start-screen'),
+      winScreen:       document.getElementById('win-screen'),
+      winStats:        document.getElementById('win-stats'),
+      timerEl:         document.getElementById('timer'),
+      speedEl:         document.getElementById('speed-indicator'),
+      compassEl:       document.getElementById('compass'),
+      compassArrow:    document.getElementById('compass-arrow'),
+      compassDist:     document.getElementById('compass-dist'),
+      launchMsg:       document.getElementById('launch-message'),
+      shieldEl:        document.getElementById('respawn-shield'),
     }
+
+    // Reusable Vector3 for compass calculations
+    this._playerV3 = new THREE.Vector3()
 
     this._setupMobile(input)
     this._setupStart()
@@ -73,6 +80,7 @@ export class UI {
 
   _setupStart() {
     document.getElementById('start-btn')?.addEventListener('click', () => this._startCallback?.())
+    document.getElementById('continue-btn')?.addEventListener('click', () => this._startCallback?.())
   }
 
   _setupWin() {
@@ -106,9 +114,10 @@ export class UI {
     ws.style.display = 'flex'
     if (this._el.winStats) {
       const mins = Math.floor(time / 60)
-      const secs = Math.floor(time % 60)
+      const secs = Math.floor(time % 60).toString().padStart(2, '0')
+      const isNewBest = this._bestTime === time && time > 0
       this._el.winStats.innerHTML = `
-        Time: <strong>${mins}m ${secs}s</strong><br/>
+        Time: <strong>${mins}m ${secs}s</strong> ${isNewBest ? '<span style="color:#ffd700">NEW BEST!</span>' : ''}<br/>
         Deaths: <strong>${deaths}</strong><br/>
         Checkpoints: <strong>${checkpoints} / ${this.totalCheckpoints}</strong><br/><br/>
         <em style="color:#ffd700">You actually did it. Absolute legend.</em>
@@ -121,7 +130,7 @@ export class UI {
     if (this._el.checkpointStat) this._el.checkpointStat.textContent = `☑ ${num} / ${this.totalCheckpoints}`
 
     const flash = this._el.checkpointFlash
-    const text = this._el.checkpointText
+    const text  = this._el.checkpointText
     if (!text) return
 
     const isZoneEnd = num % 5 === 0
@@ -138,7 +147,7 @@ export class UI {
 
   showRageMessage() {
     const msg = RAGE_MESSAGES[Math.floor(Math.random() * RAGE_MESSAGES.length)]
-    const el = this._el.rageMsg
+    const el  = this._el.rageMsg
     if (!el) return
     el.textContent = msg
     this._anim(el, [
@@ -181,15 +190,15 @@ export class UI {
     this._anim(el, [
       { opacity: '0', transform: 'translate(-50%,-50%) scale(0.4)' },
       { opacity: '1', transform: 'translate(-50%,-50%) scale(1.35)', offset: 0.3 },
-      { opacity: '1', transform: 'translate(-50%,-50%) scale(1.0)', offset: 0.55 },
+      { opacity: '1', transform: 'translate(-50%,-50%) scale(1.0)',  offset: 0.55 },
       { opacity: '0', transform: 'translate(-50%,-50%) scale(0.8)' }
     ], { duration: 2000, fill: 'forwards' })
   }
 
   updateCompass(nextCheckpointPos, playerPos, cameraCtrl) {
-    const el = this._el.compassEl
+    const el    = this._el.compassEl
     const arrow = this._el.compassArrow
-    const dist = this._el.compassDist
+    const dist  = this._el.compassDist
     if (!el || !nextCheckpointPos) { if (el) el.style.opacity = '0'; return }
 
     el.style.opacity = '1'
@@ -207,17 +216,17 @@ export class UI {
   }
 
   update(dt, player, world, cameraCtrl) {
-    const y = Math.max(0, player.position.y)
+    const y   = Math.max(0, player.position.y)
     const pct = Math.min(100, (y / world.totalHeight) * 100)
 
-    if (this._el.heightLabel) this._el.heightLabel.textContent = `${Math.floor(y)}m`
-    if (this._el.heightFill) this._el.heightFill.style.width = `${pct}%`
-    if (this._el.deathsStat) this._el.deathsStat.textContent = `💀 ${player.deathCount}`
+    if (this._el.heightLabel)  this._el.heightLabel.textContent  = `${Math.floor(y)}m`
+    if (this._el.heightFill)   this._el.heightFill.style.width   = `${pct}%`
+    if (this._el.deathsStat)   this._el.deathsStat.textContent   = `💀 ${player.deathCount}`
 
     const zi = world.getZoneForHeight(y)
     if (this._el.zoneName) this._el.zoneName.textContent = world.getZoneName(zi)
 
-    // Run timer
+    // Timer
     if (this._timerStart !== null) {
       this._elapsed = (performance.now() - this._timerStart) / 1000
       const mins = Math.floor(this._elapsed / 60)
@@ -228,7 +237,7 @@ export class UI {
     // Speed indicator
     if (this._el.speedEl) {
       const speed = player.speed
-      const kmh = Math.round(speed * 3.6)
+      const kmh   = Math.round(speed * 3.6)
       this._el.speedEl.textContent = `${kmh} km/h`
       const t = Math.min(1, speed / 20)
       const r = Math.round(t > 0.5 ? 255 : t * 510)
@@ -236,11 +245,22 @@ export class UI {
       this._el.speedEl.style.color = `rgb(${r},${g},80)`
     }
 
-    // Compass to next checkpoint
+    // Respawn shield indicator
+    if (this._el.shieldEl) {
+      if (player.isRespawnSafe) {
+        this._el.shieldEl.classList.add('active')
+      } else {
+        this._el.shieldEl.classList.remove('active')
+      }
+    }
+
+    // Compass to next checkpoint — reuse Vector3 to avoid allocation
     const nextCp = world.getNextUncollectedCheckpoint(player.checkpointIndex)
     if (cameraCtrl && nextCp) {
-      const playerPos = new THREE.Vector3(player.position.x, player.position.y, player.position.z)
-      this.updateCompass(nextCp.position, playerPos, cameraCtrl)
+      this._playerV3.set(player.position.x, player.position.y, player.position.z)
+      this.updateCompass(nextCp.position, this._playerV3, cameraCtrl)
+    } else if (this._el.compassEl) {
+      this._el.compassEl.style.opacity = '0'
     }
 
     // Milestone triggers
@@ -252,6 +272,3 @@ export class UI {
 
   onResize() {}
 }
-
-// Needed by Camera.js compass util
-import * as THREE from 'three'

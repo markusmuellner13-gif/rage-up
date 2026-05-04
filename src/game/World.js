@@ -18,7 +18,6 @@ function makeRockGeo(w, h, d, rng) {
   for (let i = 0; i < pos.count; i++) {
     const py = pos.getY(i)
     const normalizedY = (py + halfH) / h
-    // Top 30% stays mostly flat — players land here
     const factor = normalizedY > 0.7 ? 0.04 : (1 - normalizedY) * 0.28
     pos.setX(i, pos.getX(i) + (rng() - 0.5) * w * factor)
     pos.setY(i, pos.getY(i) + (rng() - 0.5) * h * factor * 0.4)
@@ -29,7 +28,7 @@ function makeRockGeo(w, h, d, rng) {
   return geo
 }
 
-// Cloud-puff geometry — squished sphere cluster merged-ish
+// Cloud-puff geometry — squished sphere cluster
 function makeCloudGeo(w, h, d) {
   const geo = new THREE.SphereGeometry(1, 8, 6)
   const pos = geo.attributes.position
@@ -91,26 +90,27 @@ const ZONE_DEFS = [
   }
 ]
 
-// platform type indices: 0=static 1=moving 2=bouncy 3=crumbling 4=ice 5=disappearing 6=launch
+// Only animate objects within this distance to save CPU
+const ANIM_CULL_DIST_SQ = 80 * 80
 
 export class World {
   constructor(scene, physicsWorld) {
-    this.scene = scene
-    this.physicsWorld = physicsWorld
-    this.platforms = []
-    this.checkpoints = []
-    this.launchPads = []
-    this._decorations = []
-    this._rng = mkRng(0xc0ffee42)
-    this._time = 0
+    this.scene         = scene
+    this.physicsWorld  = physicsWorld
+    this.platforms     = []
+    this.checkpoints   = []
+    this.launchPads    = []
+    this._decorations  = []
+    this._rng          = mkRng(0xc0ffee42)
+    this._time         = 0
 
-    this.ballMat = new CANNON.Material('ball')
+    this.ballMat   = new CANNON.Material('ball')
     this.groundMat = new CANNON.Material('ground')
-    this.iceMat = new CANNON.Material('ice')
+    this.iceMat    = new CANNON.Material('ice')
     this.bounceMat = new CANNON.Material('bounce')
 
     this.physicsWorld.addContactMaterial(new CANNON.ContactMaterial(this.ballMat, this.groundMat, { friction: 0.62, restitution: 0.22 }))
-    this.physicsWorld.addContactMaterial(new CANNON.ContactMaterial(this.ballMat, this.iceMat,   { friction: 0.02, restitution: 0.08 }))
+    this.physicsWorld.addContactMaterial(new CANNON.ContactMaterial(this.ballMat, this.iceMat,    { friction: 0.02, restitution: 0.08 }))
     this.physicsWorld.addContactMaterial(new CANNON.ContactMaterial(this.ballMat, this.bounceMat, { friction: 0.5,  restitution: 1.5  }))
   }
 
@@ -133,8 +133,7 @@ export class World {
     let x = 0, z = 0
 
     ZONE_DEFS.forEach((zone, zi) => {
-      const span = zone.maxY - zone.minY
-      // One launch pad near start of each zone (except zone 0 which is the tutorial)
+      const span   = zone.maxY - zone.minY
       const launchY = zone.minY + span * (zi === 0 ? 0.15 : 0.08)
       this._makeLaunchPad(x, launchY + 1, z, zi)
 
@@ -143,32 +142,29 @@ export class World {
         const y = zone.minY + span * progress
 
         const angle = this._rng() * Math.PI * 2
-        const dist = this._rv(zone.hGap[0], zone.hGap[1])
+        const dist  = this._rv(zone.hGap[0], zone.hGap[1])
         x += Math.cos(angle) * dist
         z += Math.sin(angle) * dist
-        // Gentle spiral inward keeps the world compact
         x *= 0.94
         z *= 0.94
 
-        const w = this._rv(zone.minW, zone.maxW)
-        const d = this._rv(zone.minD, zone.maxD)
+        const w    = this._rv(zone.minW, zone.maxW)
+        const d    = this._rv(zone.minD, zone.maxD)
         const type = this._pickType(zone.typeWeights)
 
-        const plat = this._makePlatform(x, y, z, w, 0.7, d, type, zi)
+        this._makePlatform(x, y, z, w, 0.7, d, type, zi)
 
-        // Checkpoint every ~4 platforms — but only on static/large platforms
         const cpInterval = zi < 2 ? 3 : zi < 4 ? 4 : 5
         if (i % cpInterval === cpInterval - 1 && (type === 0 || type === 1) && w > 4) {
           this._makeCheckpoint(x, y + 2.5, z, zi)
         }
 
-        // Zone decoration
         if (this._rng() < zone.decoChance && w > 5) {
           this._addDecoration(x, y + 0.35, z, w, d, zone.decoType, zi)
         }
       }
 
-      // Guaranteed wide checkpoint platform at zone transition
+      // Guaranteed wide checkpoint at zone transition
       const endY = zone.maxY - 2
       x *= 0.8; z *= 0.8
       this._makePlatform(x, endY, z, 14, 0.9, 14, 0, zi)
@@ -180,7 +176,6 @@ export class World {
   }
 
   _addGroundPlane() {
-    // Wide start platform
     this._makePlatform(0, -1, 0, 22, 1, 22, 0, 0)
     const ground = new CANNON.Body({ mass: 0, shape: new CANNON.Plane(), material: this.groundMat })
     ground.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI / 2)
@@ -190,32 +185,35 @@ export class World {
 
   _addBackgroundMountains() {
     const rng = mkRng(0xdeadbeef)
-    const count = 24
+    // Reduced from 24 to 18 — saves draw calls for decorative-only meshes
+    const count = 18
     for (let i = 0; i < count; i++) {
-      const h = 120 + rng() * 280
-      const r = 25 + rng() * 40
-      const angle = (i / count) * Math.PI * 2 + rng() * 0.4
-      const radius = 90 + rng() * 60
-      const geo = new THREE.ConeGeometry(r, h, 7)
-      const col = new THREE.Color().setHSL(0.28 - rng() * 0.06, 0.35, 0.25 + rng() * 0.12)
-      const mat = new THREE.MeshStandardMaterial({ color: col, roughness: 1.0 })
-      const mesh = new THREE.Mesh(geo, mat)
+      const h      = 120 + rng() * 280
+      const r      = 25  + rng() * 40
+      const angle  = (i / count) * Math.PI * 2 + rng() * 0.4
+      const radius = 90  + rng() * 60
+      const geo    = new THREE.ConeGeometry(r, h, 7)
+      const col    = new THREE.Color().setHSL(0.28 - rng() * 0.06, 0.35, 0.25 + rng() * 0.12)
+      const mat    = new THREE.MeshStandardMaterial({ color: col, roughness: 1.0 })
+      const mesh   = new THREE.Mesh(geo, mat)
       mesh.position.set(Math.cos(angle) * radius, h / 2 - 5, Math.sin(angle) * radius)
-      mesh.castShadow = false
+      // Mountains are far background — no shadow cast/receive needed
+      mesh.castShadow    = false
       mesh.receiveShadow = false
       this.scene.add(mesh)
 
-      // Snow cap
       const capGeo = new THREE.ConeGeometry(r * 0.35, h * 0.22, 7)
       const capMat = new THREE.MeshStandardMaterial({ color: 0xeef5ff, roughness: 0.8 })
-      const cap = new THREE.Mesh(capGeo, capMat)
-      cap.position.y = h * 0.39
+      const cap    = new THREE.Mesh(capGeo, capMat)
+      cap.castShadow    = false
+      cap.receiveShadow = false
+      cap.position.y    = h * 0.39
       mesh.add(cap)
     }
   }
 
   _makePlatform(x, y, z, w, h, d, type, zoneIdx) {
-    const phyMat = type === 4 ? this.iceMat : type === 2 ? this.bounceMat : this.groundMat
+    const phyMat     = type === 4 ? this.iceMat : type === 2 ? this.bounceMat : this.groundMat
     const isKinematic = type === 1 || type === 5
     const body = new CANNON.Body({
       mass: 0,
@@ -226,31 +224,29 @@ export class World {
     body.position.set(x, y, z)
     this.physicsWorld.addBody(body)
 
-    const zone = ZONE_DEFS[zoneIdx]
+    const zone  = ZONE_DEFS[zoneIdx]
     const group = new THREE.Group()
     group.position.set(x, y, z)
 
-    // Rocky body
     const bodyColor = type === 4 ? 0xb3e5fc
       : type === 2 ? 0xffd54f
       : type === 3 ? 0x4e342e
       : type === 5 ? 0xce93d8
       : zone.bodyColor
     const rockGeo = type === 2
-      ? makeCloudGeo(w, h, d)   // bouncy = cloud shape
+      ? makeCloudGeo(w, h, d)
       : makeRockGeo(w, h, d, mkRng(Math.floor(x * 31 + z * 17 + y * 7)))
     const bodyMat = new THREE.MeshStandardMaterial({
       color: bodyColor, roughness: type === 4 ? 0.05 : 0.88, metalness: type === 4 ? 0.1 : 0.04
     })
     const bodyMesh = new THREE.Mesh(rockGeo, bodyMat)
-    bodyMesh.castShadow = true
+    bodyMesh.castShadow    = true
     bodyMesh.receiveShadow = true
     group.add(bodyMesh)
 
-    // Top surface layer — distinct color for the walking surface
     if (type !== 2 && type !== 4) {
       const topColor = type === 3 ? 0x212121 : type === 5 ? 0xf48fb1 : zone.topColor
-      const topH = h * 0.22
+      const topH   = h * 0.22
       const topGeo = new THREE.BoxGeometry(w * 0.88, topH, d * 0.88)
       const topMat = new THREE.MeshStandardMaterial({
         color: topColor, roughness: 0.65,
@@ -258,22 +254,20 @@ export class World {
         emissiveIntensity: type === 5 ? 0.3 : 0
       })
       const topMesh = new THREE.Mesh(topGeo, topMat)
-      topMesh.position.y = h * 0.39
-      topMesh.castShadow = true
+      topMesh.position.y    = h * 0.39
+      topMesh.castShadow    = true
       topMesh.receiveShadow = true
       group.add(topMesh)
     }
 
-    // Ice: add gloss overlay
     if (type === 4) {
       const glossGeo = new THREE.BoxGeometry(w * 0.9, 0.06, d * 0.9)
       const glossMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.0, metalness: 0.0, transparent: true, opacity: 0.4 })
-      const gloss = new THREE.Mesh(glossGeo, glossMat)
+      const gloss    = new THREE.Mesh(glossGeo, glossMat)
       gloss.position.y = h * 0.5 + 0.04
       group.add(gloss)
     }
 
-    // Edge highlight on narrow platforms
     if (w < 6 || d < 6) {
       const edgesGeo = new THREE.EdgesGeometry(new THREE.BoxGeometry(w, h, d))
       const edgesMat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.18 })
@@ -286,7 +280,7 @@ export class World {
       body, mesh: group, type, zoneIdx, x, y, z, w, d, h, alive: true,
       moveRange: 5 + this._rng() * 4,
       moveSpeed: 1.2 + this._rng() * 2.2,
-      moveAxis: this._rng() > 0.5 ? 'x' : 'z',
+      moveAxis:  this._rng() > 0.5 ? 'x' : 'z',
       crumbleTimer: 0, crumbleTrigger: false,
       disappearPhase: this._rng() * Math.PI * 2
     }
@@ -295,30 +289,28 @@ export class World {
   }
 
   _makeCheckpoint(x, y, z, zoneIdx) {
-    const body = new CANNON.Body({ mass: 0 })
-    body.addShape(new CANNON.Box(new CANNON.Vec3(3.5, 3.5, 3.5)))
-    body.position.set(x, y, z)
-    this.physicsWorld.addBody(body)
+    // NOTE: No physics body — checkpoint detection is done via manual sphere overlap.
+    // Removing the physics body saves 20+ broadphase entries.
 
-    // Main orb
     const geo = new THREE.OctahedronGeometry(1.3, 1)
     const mat = new THREE.MeshStandardMaterial({
       color: 0xffd700, emissive: 0xffc200, emissiveIntensity: 1.8, roughness: 0.1, metalness: 0.9
     })
     const mesh = new THREE.Mesh(geo, mat)
+    mesh.castShadow = false
     mesh.position.set(x, y, z)
     this.scene.add(mesh)
 
-    // Outer ring
     const ringGeo = new THREE.TorusGeometry(2.8, 0.1, 8, 36)
     const ringMat = new THREE.MeshStandardMaterial({ color: 0xffd700, emissive: 0xffaa00, emissiveIntensity: 1.2 })
-    const ring = new THREE.Mesh(ringGeo, ringMat)
+    const ring    = new THREE.Mesh(ringGeo, ringMat)
+    ring.castShadow = false
     ring.position.set(x, y, z)
     this.scene.add(ring)
 
-    // Inner spin ring
     const ring2Geo = new THREE.TorusGeometry(1.8, 0.07, 6, 24)
-    const ring2 = new THREE.Mesh(ring2Geo, ringMat.clone())
+    const ring2    = new THREE.Mesh(ring2Geo, ringMat.clone())
+    ring2.castShadow = false
     ring2.rotation.x = Math.PI / 2
     ring2.position.set(x, y, z)
     this.scene.add(ring2)
@@ -328,32 +320,35 @@ export class World {
     this.scene.add(light)
 
     this.checkpoints.push({
-      body, mesh, ring, ring2, light,
+      mesh, ring, ring2, light,
       position: new THREE.Vector3(x, y, z),
       zoneIdx, collected: false, index: this.checkpoints.length
     })
   }
 
   _makeLaunchPad(x, y, z, zoneIdx) {
-    // Physics body (static box)
     const body = new CANNON.Body({
       mass: 0, shape: new CANNON.Cylinder(3, 3, 0.4, 12), material: this.groundMat
     })
     body.position.set(x, y, z)
     this.physicsWorld.addBody(body)
 
-    // Visual — glowing spiral pad
     const baseGeo = new THREE.CylinderGeometry(3.2, 3.2, 0.5, 20)
-    const baseMat = new THREE.MeshStandardMaterial({ color: 0x00e5ff, emissive: 0x00bcd4, emissiveIntensity: 1.5, roughness: 0.2, metalness: 0.5 })
+    const baseMat = new THREE.MeshStandardMaterial({
+      color: 0x00e5ff, emissive: 0x00bcd4, emissiveIntensity: 1.5, roughness: 0.2, metalness: 0.5
+    })
     const base = new THREE.Mesh(baseGeo, baseMat)
+    base.castShadow    = false
+    base.receiveShadow = false
     base.position.set(x, y, z)
-    base.castShadow = false
     this.scene.add(base)
 
-    // Arrow pointing up (cone)
     const arrowGeo = new THREE.ConeGeometry(0.8, 1.8, 8)
-    const arrowMat = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0x00e5ff, emissiveIntensity: 2.0 })
+    const arrowMat = new THREE.MeshStandardMaterial({
+      color: 0xffffff, emissive: 0x00e5ff, emissiveIntensity: 2.0
+    })
     const arrow = new THREE.Mesh(arrowGeo, arrowMat)
+    arrow.castShadow = false
     arrow.position.set(x, y + 1.5, z)
     this.scene.add(arrow)
 
@@ -368,74 +363,74 @@ export class World {
   }
 
   _addDecoration(x, y, z, platW, platD, type, zoneIdx) {
-    const rng = mkRng(Math.floor(x * 53 + z * 37 + zoneIdx * 13))
+    const rng   = mkRng(Math.floor(x * 53 + z * 37 + zoneIdx * 13))
     const group = new THREE.Group()
 
     if (type === 'tree') {
-      // Pine tree
-      const trunkH = 0.8 + rng() * 0.6
+      const trunkH   = 0.8 + rng() * 0.6
       const trunkGeo = new THREE.CylinderGeometry(0.12, 0.18, trunkH, 6)
       const trunkMat = new THREE.MeshStandardMaterial({ color: 0x5d4037, roughness: 0.9 })
-      group.add(new THREE.Mesh(trunkGeo, trunkMat))
-      // 2-3 cone layers
+      const trunk    = new THREE.Mesh(trunkGeo, trunkMat)
+      trunk.castShadow = false
+      group.add(trunk)
       const layers = 2 + Math.floor(rng() * 2)
       for (let l = 0; l < layers; l++) {
-        const r = (0.7 - l * 0.15) * (0.6 + rng() * 0.4)
-        const h = 1.0 - l * 0.1
+        const r       = (0.7 - l * 0.15) * (0.6 + rng() * 0.4)
+        const h       = 1.0 - l * 0.1
         const coneGeo = new THREE.ConeGeometry(r, h, 7)
         const coneMat = new THREE.MeshStandardMaterial({ color: 0x2e7d32, roughness: 0.85 })
-        const cone = new THREE.Mesh(coneGeo, coneMat)
+        const cone    = new THREE.Mesh(coneGeo, coneMat)
+        cone.castShadow = false
         cone.position.y = trunkH * 0.5 + l * (h * 0.5) + h * 0.3
         group.add(cone)
       }
     } else if (type === 'pillar') {
-      // Stone pillar — sometimes broken
       const pillarH = 1.5 + rng() * 2
-      const r = 0.25 + rng() * 0.2
-      const geo = new THREE.CylinderGeometry(r * 0.9, r, pillarH, 8)
-      const mat = new THREE.MeshStandardMaterial({ color: 0x9e9e9e, roughness: 0.95 })
-      const pillar = new THREE.Mesh(geo, mat)
-      pillar.rotation.z = (rng() - 0.5) * 0.3 // slight tilt for ruins feel
+      const r       = 0.25 + rng() * 0.2
+      const geo     = new THREE.CylinderGeometry(r * 0.9, r, pillarH, 8)
+      const mat     = new THREE.MeshStandardMaterial({ color: 0x9e9e9e, roughness: 0.95 })
+      const pillar  = new THREE.Mesh(geo, mat)
+      pillar.castShadow = false
+      pillar.rotation.z = (rng() - 0.5) * 0.3
       pillar.position.y = pillarH * 0.5
       group.add(pillar)
     } else if (type === 'crystal') {
-      // Glowing crystal cluster
       const count = 2 + Math.floor(rng() * 3)
       for (let c = 0; c < count; c++) {
-        const h = 0.5 + rng() * 1.2
+        const h   = 0.5 + rng() * 1.2
         const geo = new THREE.ConeGeometry(0.15, h, 5)
         const hue = 0.55 + rng() * 0.2
         const col = new THREE.Color().setHSL(hue, 0.9, 0.6)
         const mat = new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 0.8, roughness: 0.1 })
         const shard = new THREE.Mesh(geo, mat)
+        shard.castShadow = false
         shard.position.set((rng() - 0.5) * 0.6, h * 0.5, (rng() - 0.5) * 0.6)
         shard.rotation.z = (rng() - 0.5) * 0.6
         group.add(shard)
       }
     } else if (type === 'shard') {
-      // Dark jagged shard
-      const h = 0.6 + rng() * 1.0
+      const h   = 0.6 + rng() * 1.0
       const geo = new THREE.ConeGeometry(0.2, h, 4)
       const mat = new THREE.MeshStandardMaterial({ color: 0x37474f, roughness: 0.8 })
       const shard = new THREE.Mesh(geo, mat)
+      shard.castShadow = false
       shard.position.y = h * 0.5
       shard.rotation.z = (rng() - 0.5) * 0.4
       group.add(shard)
     } else if (type === 'orb') {
-      // Floating glowing orb
-      const geo = new THREE.SphereGeometry(0.3, 10, 10)
+      const geo = new THREE.SphereGeometry(0.3, 8, 8)
       const col = new THREE.Color().setHSL(rng(), 0.9, 0.6)
       const mat = new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 2.0, roughness: 0.0 })
       const orb = new THREE.Mesh(geo, mat)
+      orb.castShadow = false
       orb.position.y = 0.8 + rng() * 0.5
       group.add(orb)
       const light = new THREE.PointLight(col, 1.5, 8)
       light.position.copy(orb.position)
       group.add(light)
-      this._decorations.push({ group, type: 'float', baseY: orb.position.y, phase: rng() * Math.PI * 2 })
+      this._decorations.push({ group, type: 'float', baseY: group.position.y + orb.position.y, phase: rng() * Math.PI * 2 })
     }
 
-    // Scatter offset so decoration isn't always center
     const ox = (rng() - 0.5) * platW * 0.35
     const oz = (rng() - 0.5) * platD * 0.35
     group.position.set(x + ox, y, z + oz)
@@ -444,10 +439,10 @@ export class World {
 
   _makeSummit(x, y, z) {
     this._makePlatform(x, y - 2, z, 28, 2, 28, 0, 4)
-    // Victory pillar
     const pGeo = new THREE.CylinderGeometry(0.6, 1.8, 12, 12)
     const pMat = new THREE.MeshStandardMaterial({ color: 0xffd700, emissive: 0xffaa00, emissiveIntensity: 2.5, roughness: 0.1, metalness: 0.9 })
     const pillar = new THREE.Mesh(pGeo, pMat)
+    pillar.castShadow = false
     pillar.position.set(x, y + 5, z)
     this.scene.add(pillar)
     const vLight = new THREE.PointLight(0xffd700, 6, 100)
@@ -456,25 +451,27 @@ export class World {
   }
 
   _addStarfield() {
-    const count = 4000
-    const geo = new THREE.BufferGeometry()
+    const count     = 4000
+    const geo       = new THREE.BufferGeometry()
     const positions = new Float32Array(count * 3)
-    const colors = new Float32Array(count * 3)
+    const colors    = new Float32Array(count * 3)
     for (let i = 0; i < count; i++) {
-      positions[i * 3] = (Math.random() - 0.5) * 900
+      positions[i * 3]     = (Math.random() - 0.5) * 900
       positions[i * 3 + 1] = Math.random() * 2800 - 200
       positions[i * 3 + 2] = (Math.random() - 0.5) * 900
       const warm = Math.random()
-      colors[i * 3] = 0.8 + warm * 0.2
+      colors[i * 3]     = 0.8 + warm * 0.2
       colors[i * 3 + 1] = 0.8 + warm * 0.1
       colors[i * 3 + 2] = 0.9 + (1 - warm) * 0.1
     }
     geo.setAttribute('position', new THREE.BufferAttribute(positions, 3))
-    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3))
+    geo.setAttribute('color',    new THREE.BufferAttribute(colors, 3))
     const mat = new THREE.PointsMaterial({ vertexColors: true, size: 0.9, sizeAttenuation: true, transparent: true, opacity: 0 })
     this._stars = new THREE.Points(geo, mat)
     this.scene.add(this._stars)
   }
+
+  // ── Queries ──────────────────────────────────────────────────────────────
 
   getCheckpoint(index) {
     const i = Math.max(0, Math.min(index, this.checkpoints.length - 1))
@@ -490,13 +487,15 @@ export class World {
 
   checkPlayerCheckpoints(playerBody, playerCheckpointIndex) {
     const pos = playerBody.position
-    for (let i = playerCheckpointIndex; i < this.checkpoints.length; i++) {
+    // Only check a small window ahead — avoids iterating the whole list
+    const end = Math.min(playerCheckpointIndex + 6, this.checkpoints.length)
+    for (let i = playerCheckpointIndex; i < end; i++) {
       const cp = this.checkpoints[i]
       if (cp.collected) continue
       const dx = pos.x - cp.position.x
       const dy = pos.y - cp.position.y
       const dz = pos.z - cp.position.z
-      if (Math.sqrt(dx * dx + dy * dy + dz * dz) < 5) {
+      if (dx * dx + dy * dy + dz * dz < 25) { // 5² = 25
         cp.collected = true
         return cp
       }
@@ -508,14 +507,16 @@ export class World {
     const pos = playerBody.position
     for (const lp of this.launchPads) {
       const dx = pos.x - lp.position.x
-      const dy = pos.y - lp.position.y
       const dz = pos.z - lp.position.z
-      if (Math.abs(dy) < 2 && Math.sqrt(dx * dx + dz * dz) < 3.5) {
+      const dy = pos.y - lp.position.y
+      if (Math.abs(dy) < 2 && dx * dx + dz * dz < 12.25) { // 3.5² = 12.25
         return lp
       }
     }
     return null
   }
+
+  // ── Per-frame update ─────────────────────────────────────────────────────
 
   update(dt, playerPos) {
     this._time += dt
@@ -525,7 +526,7 @@ export class World {
 
       if (plat.type === 1) {
         const offset = Math.sin(this._time * plat.moveSpeed) * plat.moveRange
-        const vel = Math.cos(this._time * plat.moveSpeed) * plat.moveRange * plat.moveSpeed
+        const vel    = Math.cos(this._time * plat.moveSpeed) * plat.moveRange * plat.moveSpeed
         if (plat.moveAxis === 'x') {
           plat.body.position.x = plat.x + offset
           plat.body.velocity.x = vel
@@ -538,6 +539,12 @@ export class World {
       }
 
       if (plat.type === 5) {
+        // Distance cull disappearing platform animation
+        const dx = plat.x - playerPos.x
+        const dy = plat.y - playerPos.y
+        const dz = plat.z - playerPos.z
+        if (dx * dx + dy * dy + dz * dz > ANIM_CULL_DIST_SQ) continue
+
         const alpha = (Math.sin(this._time * 1.1 + plat.disappearPhase) + 1) / 2
         plat.mesh.children.forEach(c => {
           if (c.material) { c.material.transparent = true; c.material.opacity = 0.15 + alpha * 0.85 }
@@ -546,34 +553,48 @@ export class World {
       }
     }
 
-    // Checkpoint animations
+    // Checkpoint animations — distance culled
     for (const cp of this.checkpoints) {
-      if (!cp.collected) {
-        cp.mesh.rotation.y += dt * 1.8
-        cp.mesh.rotation.x = Math.sin(this._time * 0.8) * 0.3
-        cp.ring.rotation.z += dt * 1.4
-        cp.ring2.rotation.y += dt * 2.2
-        cp.mesh.position.y = cp.position.y + Math.sin(this._time * 1.5) * 0.25
-        cp.ring.position.y = cp.position.y + Math.sin(this._time * 1.5) * 0.25
-        cp.ring2.position.y = cp.position.y + Math.sin(this._time * 1.5) * 0.25
-        cp.light.intensity = 2.5 + Math.sin(this._time * 2.5) * 0.9
-      } else if (cp.mesh.visible) {
-        cp.mesh.visible = cp.ring.visible = cp.ring2.visible = false
-        cp.light.intensity = 0
+      if (cp.collected) {
+        if (cp.mesh.visible) {
+          cp.mesh.visible  = cp.ring.visible  = cp.ring2.visible = false
+          cp.light.intensity = 0
+        }
+        continue
       }
+
+      const dx = cp.position.x - playerPos.x
+      const dy = cp.position.y - playerPos.y
+      const dz = cp.position.z - playerPos.z
+      if (dx * dx + dy * dy + dz * dz > ANIM_CULL_DIST_SQ) continue
+
+      const bob = Math.sin(this._time * 1.5) * 0.25
+      cp.mesh.rotation.y += dt * 1.8
+      cp.mesh.rotation.x  = Math.sin(this._time * 0.8) * 0.3
+      cp.ring.rotation.z  += dt * 1.4
+      cp.ring2.rotation.y += dt * 2.2
+      cp.mesh.position.y  = cp.position.y + bob
+      cp.ring.position.y  = cp.position.y + bob
+      cp.ring2.position.y = cp.position.y + bob
+      cp.light.intensity  = 2.5 + Math.sin(this._time * 2.5) * 0.9
     }
 
-    // Launch pad pulse
+    // Launch pad pulse — distance culled
     for (const lp of this.launchPads) {
+      const dx = lp.position.x - playerPos.x
+      const dz = lp.position.z - playerPos.z
+      if (dx * dx + dz * dz > ANIM_CULL_DIST_SQ) continue
       lp.arrow.position.y = lp.position.y + 1.5 + Math.sin(this._time * 3) * 0.25
-      lp.light.intensity = 2.5 + Math.sin(this._time * 4) * 1.2
+      lp.light.intensity  = 2.5 + Math.sin(this._time * 4) * 1.2
     }
 
-    // Floating decorations
+    // Floating decorations — distance culled
     for (const d of this._decorations) {
-      if (d.type === 'float') {
-        d.group.position.y += Math.sin(this._time * 1.8 + d.phase) * dt * 0.5
-      }
+      if (d.type !== 'float') continue
+      const dx = d.group.position.x - playerPos.x
+      const dz = d.group.position.z - playerPos.z
+      if (dx * dx + dz * dz > ANIM_CULL_DIST_SQ) continue
+      d.group.position.y = d.baseY + Math.sin(this._time * 1.8 + d.phase) * 0.4
     }
 
     // Starfield fade in above 850m
@@ -597,7 +618,7 @@ export class World {
   }
 
   getZoneName(i) { return ZONE_DEFS[Math.max(0, Math.min(i, ZONE_DEFS.length - 1))].name }
-  get zoneCount() { return ZONE_DEFS.length }
-  get totalHeight() { return 2000 }
-  get zoneDefs() { return ZONE_DEFS }
+  get zoneCount()  { return ZONE_DEFS.length }
+  get totalHeight(){ return 2000 }
+  get zoneDefs()   { return ZONE_DEFS }
 }

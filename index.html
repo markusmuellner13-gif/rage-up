@@ -5,12 +5,44 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="theme-color" content="#000000" />
   <title>RAGE UP — The Impossible Climb</title>
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
     html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
-    #game-canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
+    #game-canvas { display: block; width: 100vw; height: 100vh; touch-action: none; cursor: crosshair; }
 
+    /* ── LOADING SCREEN ── */
+    #loading-screen {
+      position: fixed; inset: 0; background: #000;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      z-index: 9999; gap: 20px;
+    }
+    .loading-title {
+      color: #fff; font-family: 'Segoe UI', system-ui, sans-serif;
+      font-size: clamp(32px, 8vw, 72px); font-weight: 900; letter-spacing: 4px;
+      text-shadow: 0 0 40px #ff4400;
+    }
+    .loading-bar-bg {
+      width: clamp(200px, 50vw, 400px); height: 6px;
+      background: rgba(255,255,255,0.15); border-radius: 3px; overflow: hidden;
+    }
+    .loading-bar-fill {
+      height: 100%; width: 0%;
+      background: linear-gradient(90deg, #ff4400, #ff8800);
+      border-radius: 3px;
+      animation: loadpulse 1.2s ease-in-out infinite;
+    }
+    @keyframes loadpulse {
+      0%,100% { width: 20%; margin-left: 0; }
+      50% { width: 60%; margin-left: 20%; }
+    }
+    .loading-sub {
+      color: rgba(255,150,50,0.7); font-family: 'Segoe UI', system-ui, sans-serif;
+      font-size: clamp(11px, 2.5vw, 15px); letter-spacing: 3px; text-transform: uppercase;
+    }
+
+    /* ── MAIN UI ── */
     #ui {
       position: fixed; inset: 0; pointer-events: none;
       font-family: 'Segoe UI', system-ui, sans-serif;
@@ -27,10 +59,17 @@
 
     /* ── SPEED INDICATOR ── */
     #speed-indicator {
-      position: absolute; top: 38px; left: 16px;
+      position: absolute; top: 40px; left: 16px;
       font-size: clamp(10px, 1.8vw, 13px); font-weight: 700;
       letter-spacing: 1px; text-shadow: 0 1px 3px rgba(0,0,0,0.8);
       transition: color 0.2s;
+    }
+
+    /* ── PAUSE HINT ── */
+    #pause-hint {
+      position: absolute; top: 60px; left: 16px;
+      color: rgba(255,255,255,0.3); font-size: clamp(9px, 1.5vw, 11px);
+      letter-spacing: 1px; font-weight: 600;
     }
 
     /* ── COMPASS ── */
@@ -55,8 +94,7 @@
       position: absolute; top: 28%; left: 50%; transform: translate(-50%,-50%);
       color: #00e5ff; font-size: clamp(26px, 6vw, 56px); font-weight: 900;
       text-shadow: 0 0 30px #00e5ff, 0 0 60px rgba(0,229,255,0.5);
-      opacity: 0; pointer-events: none; text-align: center; letter-spacing: 3px;
-      display: none;
+      opacity: 0; pointer-events: none; text-align: center; letter-spacing: 3px; display: none;
     }
 
     /* ── HEIGHT METER ── */
@@ -70,8 +108,9 @@
       letter-spacing: 2px;
     }
     #height-bar-bg {
-      width: clamp(160px, 40vw, 320px); height: 8px; background: rgba(0,0,0,0.5);
-      border-radius: 4px; border: 1px solid rgba(255,255,255,0.3);
+      width: clamp(160px, 40vw, 320px); height: 8px;
+      background: rgba(0,0,0,0.5); border-radius: 4px;
+      border: 1px solid rgba(255,255,255,0.25); overflow: hidden;
     }
     #height-bar-fill {
       height: 100%; background: linear-gradient(90deg, #4caf50, #ffeb3b, #ff5722);
@@ -81,18 +120,20 @@
     /* ── ZONE NAME ── */
     #zone-name {
       position: absolute; top: 80px; left: 50%; transform: translateX(-50%);
-      color: rgba(255,255,255,0.7); font-size: clamp(12px, 2.5vw, 16px);
-      font-weight: 600; letter-spacing: 3px; text-transform: uppercase;
-      text-shadow: 0 0 10px rgba(255,255,255,0.5);
+      color: rgba(255,255,255,0.65); font-size: clamp(11px, 2.2vw, 15px);
+      font-weight: 700; letter-spacing: 4px; text-transform: uppercase;
+      text-shadow: 0 0 10px rgba(255,255,255,0.4);
     }
 
     /* ── STATS (top right) ── */
     #stats {
       position: absolute; top: 16px; right: 16px;
-      display: flex; flex-direction: column; align-items: flex-end; gap: 4px;
+      display: flex; flex-direction: column; align-items: flex-end; gap: 5px;
     }
-    .stat { color: rgba(255,255,255,0.85); font-size: clamp(11px, 2vw, 14px);
-      font-weight: 600; text-shadow: 0 1px 3px rgba(0,0,0,0.8); }
+    .stat {
+      color: rgba(255,255,255,0.85); font-size: clamp(11px, 2vw, 14px);
+      font-weight: 600; text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+    }
     #deaths { color: #ff5252; }
 
     /* ── CHECKPOINT FLASH ── */
@@ -124,8 +165,25 @@
       opacity: 0; pointer-events: none; text-align: center; letter-spacing: 4px;
     }
     #zone-announce span {
-      display: block; font-size: 0.5em; color: rgba(255,255,255,0.6);
+      display: block; font-size: 0.5em; color: rgba(255,255,255,0.55);
       letter-spacing: 8px; margin-top: 6px;
+    }
+
+    /* ── PLATFORM LEGEND (bottom left when near start) ── */
+    #platform-legend {
+      position: absolute; bottom: 16px; left: 16px;
+      display: flex; flex-direction: column; gap: 4px;
+      opacity: 0; transition: opacity 1s;
+      pointer-events: none;
+    }
+    #platform-legend.visible { opacity: 1; }
+    .legend-item {
+      display: flex; align-items: center; gap: 6px;
+      color: rgba(255,255,255,0.7); font-size: clamp(9px, 1.5vw, 11px);
+      font-weight: 600; letter-spacing: 1px;
+    }
+    .legend-dot {
+      width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0;
     }
 
     /* ── MOBILE CONTROLS ── */
@@ -139,8 +197,8 @@
     }
     #jump-btn {
       position: absolute; bottom: 30px; right: 30px;
-      width: 80px; height: 80px; border-radius: 50%;
-      background: rgba(255,255,255,0.25); border: 3px solid rgba(255,255,255,0.6);
+      width: 82px; height: 82px; border-radius: 50%;
+      background: rgba(255,255,255,0.22); border: 3px solid rgba(255,255,255,0.55);
       color: #fff; font-size: 11px; font-weight: 900; letter-spacing: 1px;
       cursor: pointer; pointer-events: all;
       display: flex; align-items: center; justify-content: center;
@@ -148,70 +206,111 @@
       transition: background 0.1s, transform 0.1s;
       -webkit-tap-highlight-color: transparent;
     }
-    #jump-btn:active { background: rgba(255,255,255,0.5); transform: scale(0.92); }
+    #jump-btn:active { background: rgba(255,255,255,0.5); transform: scale(0.9); }
     #camera-btn {
       position: absolute; bottom: 30px; right: 130px;
       width: 60px; height: 60px; border-radius: 50%;
-      background: rgba(200,200,255,0.2); border: 2px solid rgba(255,255,255,0.4);
-      color: rgba(255,255,255,0.7); font-size: 10px; font-weight: 700;
+      background: rgba(200,200,255,0.18); border: 2px solid rgba(255,255,255,0.35);
+      color: rgba(255,255,255,0.65); font-size: 10px; font-weight: 700;
       cursor: pointer; pointer-events: all;
       display: flex; align-items: center; justify-content: center;
       -webkit-tap-highlight-color: transparent;
     }
 
+    /* ── PAUSE SCREEN ── */
+    #pause-screen {
+      position: absolute; inset: 0;
+      background: rgba(0,0,0,0.75);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      display: none; flex-direction: column; align-items: center; justify-content: center;
+      pointer-events: all; gap: 16px;
+    }
+    #pause-screen h2 {
+      color: #fff; font-size: clamp(28px, 7vw, 60px); font-weight: 900;
+      letter-spacing: 4px; text-shadow: 0 0 30px rgba(255,200,100,0.7);
+    }
+    .pause-btn {
+      background: rgba(255,255,255,0.12); border: 2px solid rgba(255,255,255,0.3);
+      color: #fff; border-radius: 10px; padding: 12px 36px;
+      font-size: clamp(13px, 3vw, 18px); font-weight: 800; letter-spacing: 2px;
+      cursor: pointer; text-transform: uppercase; transition: background 0.15s, transform 0.1s;
+      min-width: 200px; text-align: center;
+    }
+    .pause-btn:hover { background: rgba(255,255,255,0.22); transform: scale(1.03); }
+    .pause-btn:active { transform: scale(0.97); }
+    #resume-btn { background: rgba(76,175,80,0.25); border-color: rgba(76,175,80,0.6); }
+    #resume-btn:hover { background: rgba(76,175,80,0.4); }
+    #quit-btn { background: rgba(255,82,82,0.2); border-color: rgba(255,82,82,0.5); }
+    #quit-btn:hover { background: rgba(255,82,82,0.35); }
+    .pause-sub {
+      color: rgba(255,255,255,0.4); font-size: clamp(10px, 2vw, 13px);
+      letter-spacing: 2px; margin-top: 8px;
+    }
+
     /* ── START SCREEN ── */
     #start-screen {
-      position: absolute; inset: 0; background: rgba(0,0,0,0.88);
+      position: absolute; inset: 0; background: rgba(0,0,0,0.90);
       display: flex; flex-direction: column; align-items: center;
-      justify-content: center; pointer-events: all;
-      padding: 20px;
+      justify-content: center; pointer-events: all; padding: 20px; gap: 0;
     }
     #start-screen h1 {
-      color: #fff; font-size: clamp(36px, 10vw, 90px); font-weight: 900;
+      color: #fff; font-size: clamp(42px, 12vw, 100px); font-weight: 900;
       letter-spacing: 4px; text-align: center;
       text-shadow: 0 0 40px #ff4400, 0 0 80px rgba(255,68,0,0.5);
-      line-height: 1;
+      line-height: 1; animation: titlePulse 2s ease-in-out infinite;
+    }
+    @keyframes titlePulse {
+      0%,100% { text-shadow: 0 0 40px #ff4400, 0 0 80px rgba(255,68,0,0.4); }
+      50% { text-shadow: 0 0 70px #ff6600, 0 0 140px rgba(255,100,0,0.6); }
     }
     #start-screen .subtitle {
-      color: rgba(255,150,50,0.9); font-size: clamp(13px, 3vw, 22px);
-      margin: 12px 0 30px; letter-spacing: 3px; text-transform: uppercase;
-      text-align: center;
+      color: rgba(255,150,50,0.85); font-size: clamp(13px, 3vw, 22px);
+      margin: 12px 0 24px; letter-spacing: 3px; text-transform: uppercase; text-align: center;
     }
     #start-screen .instructions {
-      max-width: 480px; background: rgba(255,255,255,0.07);
-      border: 1px solid rgba(255,255,255,0.15); border-radius: 12px;
-      padding: 20px 28px; margin-bottom: 32px;
+      max-width: 500px; background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.12); border-radius: 14px;
+      padding: 20px 28px; margin-bottom: 28px;
     }
     #start-screen .instructions p {
-      color: rgba(255,255,255,0.8); font-size: clamp(11px, 2.5vw, 15px);
-      line-height: 1.8; text-align: center;
+      color: rgba(255,255,255,0.8); font-size: clamp(11px, 2.5vw, 14px);
+      line-height: 1.9; text-align: center;
     }
-    #start-screen .instructions .key {
-      display: inline-block; background: rgba(255,255,255,0.15);
-      border: 1px solid rgba(255,255,255,0.3); border-radius: 4px;
+    .key {
+      display: inline-block; background: rgba(255,255,255,0.14);
+      border: 1px solid rgba(255,255,255,0.3); border-radius: 5px;
       padding: 1px 7px; font-weight: 700; letter-spacing: 0;
     }
+    .start-btns { display: flex; flex-direction: column; align-items: center; gap: 10px; }
     #start-btn {
       background: linear-gradient(135deg, #ff4400, #ff8800);
       color: #fff; border: none; border-radius: 12px;
-      padding: 16px 48px; font-size: clamp(16px, 4vw, 24px);
-      font-weight: 900; letter-spacing: 3px; cursor: pointer;
-      text-transform: uppercase;
-      box-shadow: 0 0 30px rgba(255,100,0,0.5);
-      transition: transform 0.15s, box-shadow 0.15s;
+      padding: 16px 52px; font-size: clamp(16px, 4vw, 24px);
+      font-weight: 900; letter-spacing: 3px; cursor: pointer; text-transform: uppercase;
+      box-shadow: 0 0 30px rgba(255,100,0,0.5); transition: transform 0.15s, box-shadow 0.15s;
     }
     #start-btn:hover { transform: scale(1.05); box-shadow: 0 0 50px rgba(255,100,0,0.8); }
     #start-btn:active { transform: scale(0.97); }
+    #continue-btn {
+      background: rgba(255,255,255,0.1); border: 2px solid rgba(255,255,255,0.3);
+      color: rgba(255,255,255,0.8); border-radius: 10px;
+      padding: 10px 36px; font-size: clamp(12px, 3vw, 17px);
+      font-weight: 700; letter-spacing: 2px; cursor: pointer; text-transform: uppercase;
+      transition: background 0.15s;
+    }
+    #continue-btn:hover { background: rgba(255,255,255,0.2); }
+    #continue-btn { display: none; }
     .warning-text {
-      color: rgba(255,100,100,0.8); font-size: clamp(10px, 2vw, 13px);
-      margin-top: 16px; text-align: center; letter-spacing: 1px;
+      color: rgba(255,100,100,0.7); font-size: clamp(10px, 2vw, 12px);
+      margin-top: 14px; text-align: center; letter-spacing: 1px;
     }
 
     /* ── WIN SCREEN ── */
     #win-screen {
-      position: absolute; inset: 0; background: rgba(0,0,0,0.9);
+      position: absolute; inset: 0; background: rgba(0,0,0,0.92);
       display: none; flex-direction: column; align-items: center;
-      justify-content: center; pointer-events: all; padding: 20px;
+      justify-content: center; pointer-events: all; padding: 20px; gap: 16px;
     }
     #win-screen h1 {
       color: #ffd700; font-size: clamp(32px, 9vw, 80px); font-weight: 900;
@@ -223,19 +322,25 @@
       0%,100% { text-shadow: 0 0 40px #ffd700, 0 0 80px rgba(255,215,0,0.5); }
       50% { text-shadow: 0 0 80px #ffd700, 0 0 160px rgba(255,215,0,0.8); }
     }
-    #win-screen .win-stats {
+    #win-screen .win-sub {
+      color: rgba(255,255,255,0.5); font-size: clamp(12px, 2.5vw, 17px);
+      letter-spacing: 3px; text-transform: uppercase;
+    }
+    #win-stats {
       color: rgba(255,255,255,0.85); font-size: clamp(14px, 3vw, 20px);
-      text-align: center; margin: 24px 0; line-height: 2;
+      text-align: center; line-height: 2.1;
+      background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 14px; padding: 20px 36px;
     }
     #restart-btn {
       background: linear-gradient(135deg, #4caf50, #2e7d32);
       color: #fff; border: none; border-radius: 12px;
-      padding: 14px 40px; font-size: clamp(14px, 3vw, 20px);
-      font-weight: 900; letter-spacing: 2px; cursor: pointer;
-      text-transform: uppercase; margin-top: 8px;
-      transition: transform 0.15s;
+      padding: 14px 44px; font-size: clamp(14px, 3vw, 20px);
+      font-weight: 900; letter-spacing: 2px; cursor: pointer; text-transform: uppercase;
+      transition: transform 0.15s, box-shadow 0.15s;
+      box-shadow: 0 0 20px rgba(76,175,80,0.4);
     }
-    #restart-btn:hover { transform: scale(1.05); }
+    #restart-btn:hover { transform: scale(1.05); box-shadow: 0 0 40px rgba(76,175,80,0.7); }
 
     /* ── SCREEN FLASH ── */
     #screen-flash {
@@ -245,31 +350,49 @@
 
     /* ── CONTROLS HINT ── */
     #controls-hint {
-      position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
-      color: rgba(255,255,255,0.4); font-size: clamp(10px, 2vw, 13px);
-      letter-spacing: 2px; text-align: center; pointer-events: none;
+      position: absolute; bottom: 16px; right: 16px;
+      color: rgba(255,255,255,0.35); font-size: clamp(9px, 1.8vw, 12px);
+      letter-spacing: 2px; text-align: right; pointer-events: none; line-height: 1.8;
     }
 
     /* ── MILESTONE ── */
     #milestone {
       position: absolute; top: 30%; left: 50%; transform: translate(-50%,-50%);
       color: #ffd700; font-size: clamp(24px, 6vw, 56px); font-weight: 900;
-      text-shadow: 0 0 40px #ffd700;
-      opacity: 0; pointer-events: none; text-align: center;
+      text-shadow: 0 0 40px #ffd700; opacity: 0; pointer-events: none; text-align: center;
     }
+
+    /* ── RESPAWN SHIELD INDICATOR ── */
+    #respawn-shield {
+      position: absolute; bottom: 80px; left: 50%; transform: translateX(-50%);
+      color: rgba(0,229,255,0.7); font-size: clamp(10px, 2vw, 13px); font-weight: 700;
+      letter-spacing: 2px; opacity: 0; pointer-events: none;
+      transition: opacity 0.3s;
+    }
+    #respawn-shield.active { opacity: 1; }
 
     @media (max-width: 600px) {
       #controls-hint { display: none; }
       #stats { top: 8px; right: 8px; }
+      #pause-hint { display: none; }
+      #platform-legend { display: none; }
     }
   </style>
 </head>
 <body>
+  <!-- Loading screen (shown before JS builds the world) -->
+  <div id="loading-screen">
+    <div class="loading-title">RAGE UP</div>
+    <div class="loading-bar-bg"><div class="loading-bar-fill"></div></div>
+    <div class="loading-sub">Building the impossible...</div>
+  </div>
+
   <canvas id="game-canvas"></canvas>
 
   <div id="ui">
     <div id="timer">0:00</div>
     <div id="speed-indicator">0 km/h</div>
+    <div id="pause-hint">ESC — PAUSE</div>
 
     <div id="height-meter">
       <div id="height-label">0m</div>
@@ -278,7 +401,7 @@
     <div id="zone-name">THE GARDEN</div>
 
     <div id="stats">
-      <div class="stat" id="checkpoint-stat">☑ 0 / 20</div>
+      <div class="stat" id="checkpoint-stat">☑ 0 / ?</div>
       <div class="stat" id="deaths">💀 0</div>
     </div>
 
@@ -288,13 +411,21 @@
     <div id="rage-message">SKILL ISSUE</div>
     <div id="zone-announce">ENTERING<span>THE GARDEN</span></div>
     <div id="milestone">100m!</div>
+    <div id="launch-message">🚀 LAUNCH!</div>
+    <div id="respawn-shield">PROTECTED</div>
 
     <div id="compass">
       <div id="compass-arrow">▲</div>
       <div id="compass-dist"></div>
     </div>
 
-    <div id="launch-message">🚀 LAUNCH!</div>
+    <!-- Platform legend shown in early game -->
+    <div id="platform-legend">
+      <div class="legend-item"><div class="legend-dot" style="background:#b3e5fc"></div>ICE — slippery</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#ffd54f"></div>CLOUD — bouncy</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#ce93d8"></div>GHOST — fades</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#00e5ff"></div>LAUNCH — fly!</div>
+    </div>
 
     <div id="mobile-controls">
       <div id="joystick-zone"></div>
@@ -303,29 +434,45 @@
     </div>
 
     <div id="controls-hint">
-      WASD / ARROW KEYS — MOVE &nbsp;|&nbsp; SPACE — JUMP &nbsp;|&nbsp; MOUSE — LOOK
+      WASD / ARROWS — MOVE<br>SPACE — JUMP &nbsp;|&nbsp; MOUSE — LOOK<br>ESC — PAUSE
     </div>
   </div>
 
+  <!-- Pause Screen -->
+  <div id="pause-screen">
+    <h2>PAUSED</h2>
+    <div style="display:flex;flex-direction:column;gap:10px;width:220px;">
+      <button class="pause-btn" id="resume-btn">▶ RESUME</button>
+      <button class="pause-btn" id="quit-btn">↩ QUIT</button>
+    </div>
+    <div class="pause-sub">ESC to resume</div>
+  </div>
+
+  <!-- Start Screen -->
   <div id="start-screen">
     <h1>RAGE UP</h1>
     <div class="subtitle">The Impossible Climb</div>
     <div class="instructions">
       <p>
-        Roll your ball to the <strong>top of the world</strong> — 2000m above.<br/><br/>
-        <span class="key">W A S D</span> or <span class="key">↑ ↓ ← →</span> &nbsp;Roll your ball<br/>
-        <span class="key">SPACE</span> &nbsp;Jump (once per ground contact)<br/>
-        <span class="key">MOUSE</span> &nbsp;Rotate camera<br/><br/>
-        Physics-based movement. <em>Momentum is everything.</em><br/>
+        Roll your ball <strong>2000m to the top</strong> of the world.<br/><br/>
+        <span class="key">W A S D</span> or <span class="key">↑ ↓ ← →</span> &nbsp;Move<br/>
+        <span class="key">SPACE</span> &nbsp;Jump &nbsp;(hold for higher!)<br/>
+        <span class="key">MOUSE</span> &nbsp;Rotate camera &nbsp;|&nbsp; <span class="key">ESC</span> &nbsp;Pause<br/><br/>
+        Physics-based. <em>Momentum is everything.</em><br/>
         Fall too far → respawn at last checkpoint.
       </p>
     </div>
-    <button id="start-btn">START CLIMBING</button>
-    <p class="warning-text">⚠ Warning: This game may cause extreme frustration. You have been warned.</p>
+    <div class="start-btns">
+      <button id="start-btn">START CLIMBING</button>
+      <button id="continue-btn">CONTINUE</button>
+    </div>
+    <p class="warning-text">⚠ This game WILL make you rage. You have been warned.</p>
   </div>
 
+  <!-- Win Screen -->
   <div id="win-screen">
     <h1>🏆 YOU MADE IT!</h1>
+    <div class="win-sub">The impossible climb is complete</div>
     <div class="win-stats" id="win-stats"></div>
     <button id="restart-btn">CLIMB AGAIN</button>
   </div>
