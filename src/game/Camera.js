@@ -29,7 +29,8 @@ export class CameraController {
     // Manual rotation via mouse / touch
     this.yaw   -= inputState.mouseDx
     this.pitch -= inputState.mouseDy
-    this.pitch  = Math.max(-0.05, Math.min(0.88, this.pitch))
+    // Wider pitch range: looking nearly top-down matters when judging landings
+    this.pitch  = Math.max(-0.05, Math.min(1.25, this.pitch))
 
     // Auto-rotate yaw toward movement direction when not actively steering
     if (playerVelocity && Math.abs(inputState.mouseDx) < 0.001 && Math.abs(inputState.mouseDy) < 0.001) {

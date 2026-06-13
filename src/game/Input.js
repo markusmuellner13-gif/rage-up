@@ -9,7 +9,9 @@ export class Input {
 
     document.addEventListener('keydown', e => {
       this.keys[e.code] = true
-      if (e.code === 'Space') { this._jumpQueued = true; e.preventDefault() }
+      // e.repeat guards against OS key-repeat refilling the jump buffer
+      // (which would auto-bunnyhop on every landing while Space is held)
+      if (e.code === 'Space') { if (!e.repeat) this._jumpQueued = true; e.preventDefault() }
       if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code)) e.preventDefault()
     })
     document.addEventListener('keyup', e => { this.keys[e.code] = false })
@@ -85,7 +87,9 @@ export class Input {
                 (this.keys['KeyS'] || this.keys['ArrowDown']) ? -1 : this.touch.forward
     const right = (this.keys['KeyD'] || this.keys['ArrowRight']) ? 1 :
                   (this.keys['KeyA'] || this.keys['ArrowLeft']) ? -1 : this.touch.right
-    const jump = this._jumpQueued || this.keys['Space']
+    // Press-only: holding Space must not re-feed the jump buffer every frame
+    // (that caused accidental auto-bunnyhops on landing)
+    const jump = this._jumpQueued
 
     const state = {
       forward: fwd, right,

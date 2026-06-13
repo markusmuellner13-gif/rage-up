@@ -1,41 +1,56 @@
 import * as THREE from 'three'
 import nipplejs from 'nipplejs'
 
-const RAGE_MESSAGES = [
-  'SKILL ISSUE', 'JUST LIKE THAT?!', 'REALLY??', 'YOU WERE SO CLOSE!',
-  'TRY AGAIN', 'NOT EVEN CLOSE', 'GRAVITY WINS AGAIN',
-  'L + RATIO + FELL OFF', 'TOUCH GRASS → THEN TRY AGAIN',
-  'THIS IS EMBARRASSING', 'MY GRANDMA CLIMBS FASTER',
-  'THE BALL HAS HAD ENOUGH', 'BACK TO CHECKPOINT (YOU\'RE WELCOME)',
-  'HAVE YOU TRIED NOT FALLING?', 'IMAGINE FALLING HERE',
-  'GIT GUD', 'skill diff', 'YOU ALMOST HAD IT... NOT',
-  'THE PHYSICS ARE NOT TO BLAME', 'MAYBE TRY SLOWER?', 'OR FASTER?',
-  'INCREDIBLE. WRONG WAY.', 'CERTIFIED FALLING CHAMPION',
-  'ONE JOB. ONE.', 'HOW?', 'THIS IS FINE. (IT\'S NOT FINE.)',
-  'WOULD A TUTORIAL HELP? LMAO', 'YIKES.',
+// Tiered mockery — the bigger the fall, the more personal it gets
+const SMALL_FALLS = [
+  'SKILL ISSUE', 'OOPS.', 'A LITTLE SLIP', 'NOT LIKE THAT',
+  'GRAVITY: 1 — YOU: 0', 'WRONG.', 'THAT LOOKED AVOIDABLE',
+  'TRY THAT AGAIN', 'HM.', 'CAREFUL NOW',
+]
+const MID_FALLS = [
+  'L + RATIO + FELL OFF', 'MY GRANDMA CLIMBS FASTER',
+  'THE BALL HAS HAD ENOUGH', 'INCREDIBLE. WRONG WAY.',
+  'HOW?', 'THIS IS EMBARRASSING', 'CERTIFIED FALLING CHAMPION',
+  'YOU WERE SO CLOSE!', 'GIT GUD', 'THE PHYSICS ARE NOT TO BLAME',
+  'IMAGINE FALLING HERE', 'ONE JOB. ONE.',
+]
+const HUGE_FALLS = [
+  'ALL THAT. FOR NOTHING.',
+  'THE MOUNTAIN DOESN\'T CARE',
+  '"THE FALL IS PART OF THE CLIMB" — NOBODY',
+  'DON\'T UNINSTALL. DON\'T UNINSTALL.',
+  'YOUR CLIMB MEANT NOTHING TO GRAVITY',
+  'BREATHE. IT\'S JUST A GAME. (IT ISN\'T.)',
+  'SOMEWHERE, SOMEONE JUST BEAT THIS GAME',
+  'THAT ONE HURT TO WATCH',
 ]
 
 export class UI {
-  constructor(canvas, input) {
+  constructor(canvas, input, sound) {
     this.canvas           = canvas
     this.input            = input
-    this.deaths           = 0
-    this.checkpointCount  = 0
-    this.totalCheckpoints = 0
+    this.sound            = sound
+    this.crownCount       = 0
+    this.totalCrowns      = 0
+    this.fallCount        = 0
     this._milestones      = new Set()
     this._timerStart      = null
+    this._elapsedBase     = 0
     this._elapsed         = 0
-    this._bestTime        = parseFloat(localStorage.getItem('rage-up-best') || '0')
+    this._bestHeight      = 0
 
     this._el = {
       heightLabel:     document.getElementById('height-label'),
       heightFill:      document.getElementById('height-bar-fill'),
+      heightBest:      document.getElementById('height-bar-best'),
       zoneName:        document.getElementById('zone-name'),
-      checkpointStat:  document.getElementById('checkpoint-stat'),
-      deathsStat:      document.getElementById('deaths'),
+      crownStat:       document.getElementById('checkpoint-stat'),
+      fallsStat:       document.getElementById('deaths'),
+      bestStat:        document.getElementById('best-stat'),
       checkpointFlash: document.getElementById('checkpoint-flash'),
       checkpointText:  document.getElementById('checkpoint-text'),
       rageMsg:         document.getElementById('rage-message'),
+      lostHeight:      document.getElementById('lost-height'),
       zoneAnnounce:    document.getElementById('zone-announce'),
       milestone:       document.getElementById('milestone'),
       mobileControls:  document.getElementById('mobile-controls'),
@@ -48,15 +63,32 @@ export class UI {
       compassArrow:    document.getElementById('compass-arrow'),
       compassDist:     document.getElementById('compass-dist'),
       launchMsg:       document.getElementById('launch-message'),
-      shieldEl:        document.getElementById('respawn-shield'),
+      muteIndicator:   document.getElementById('mute-indicator'),
+      pauseStats:      document.getElementById('pause-stats'),
     }
 
-    // Reusable Vector3 for compass calculations
     this._playerV3 = new THREE.Vector3()
 
     this._setupMobile(input)
     this._setupStart()
     this._setupWin()
+  }
+
+  get elapsed() {
+    if (this._timerStart === null) return this._elapsedBase
+    return this._elapsedBase + (performance.now() - this._timerStart) / 1000
+  }
+
+  setElapsedBase(seconds) { this._elapsedBase = seconds }
+
+  setCrownCount(n) {
+    this.crownCount = n
+    if (this._el.crownStat) this._el.crownStat.textContent = `👑 ${n} / ${this.totalCrowns}`
+  }
+
+  setBestHeight(y) {
+    this._bestHeight = y
+    if (this._el.bestStat) this._el.bestStat.textContent = `⬆ best ${Math.floor(y)}m`
   }
 
   _setupMobile(input) {
@@ -103,38 +135,44 @@ export class UI {
     this._timerStart = performance.now()
   }
 
-  showWinScreen(deaths, checkpoints) {
-    const time = this._elapsed
-    if (this._bestTime === 0 || time < this._bestTime) {
-      localStorage.setItem('rage-up-best', time.toFixed(1))
-      this._bestTime = time
-    }
+  showWinScreen(falls, crowns) {
+    const time = this.elapsed
     const ws = this._el.winScreen
     if (!ws) return
     ws.style.display = 'flex'
     if (this._el.winStats) {
       const mins = Math.floor(time / 60)
       const secs = Math.floor(time % 60).toString().padStart(2, '0')
-      const isNewBest = this._bestTime === time && time > 0
       this._el.winStats.innerHTML = `
-        Time: <strong>${mins}m ${secs}s</strong> ${isNewBest ? '<span style="color:#ffd700">NEW BEST!</span>' : ''}<br/>
-        Deaths: <strong>${deaths}</strong><br/>
-        Checkpoints: <strong>${checkpoints} / ${this.totalCheckpoints}</strong><br/><br/>
-        <em style="color:#ffd700">You actually did it. Absolute legend.</em>
+        Time: <strong>${mins}m ${secs}s</strong><br/>
+        Falls survived: <strong>${falls}</strong><br/>
+        Crowns: <strong>${crowns} / ${this.totalCrowns}</strong><br/><br/>
+        <em style="color:#ffd700">2000 metres. No checkpoints. You actually did it.</em>
       `
     }
   }
 
-  showCheckpointReached(num) {
-    this.checkpointCount = num
-    if (this._el.checkpointStat) this._el.checkpointStat.textContent = `☑ ${num} / ${this.totalCheckpoints}`
+  fillPauseStats(player, stats) {
+    const el = this._el.pauseStats
+    if (!el) return
+    const t = this.elapsed
+    const mins = Math.floor(t / 60)
+    const totalH = Math.floor((stats.totalTime || 0) / 3600)
+    const totalM = Math.floor(((stats.totalTime || 0) % 3600) / 60)
+    el.innerHTML =
+      `HEIGHT ${Math.floor(player.position.y)}m &nbsp;·&nbsp; BEST ${Math.floor(stats.bestY)}m &nbsp;·&nbsp; FALLS ${player.fallCount}<br/>` +
+      `THIS RUN ${mins}min &nbsp;·&nbsp; LIFETIME ${totalH > 0 ? totalH + 'h ' : ''}${totalM}min · ${stats.totalFalls} FALLS`
+  }
+
+  showCrownCollected(num) {
+    this.crownCount = num
+    if (this._el.crownStat) this._el.crownStat.textContent = `👑 ${num} / ${this.totalCrowns}`
 
     const flash = this._el.checkpointFlash
     const text  = this._el.checkpointText
     if (!text) return
 
-    const isZoneEnd = num % 5 === 0
-    text.textContent = isZoneEnd ? '🔥 ZONE CLEARED! 🔥' : (num % 3 === 0 ? '⭐ CHECKPOINT! ⭐' : 'CHECKPOINT!')
+    text.textContent = '👑 CROWN!'
 
     this._anim(flash, [{ opacity: '1' }, { opacity: '0' }], { duration: 700, fill: 'forwards' })
     this._anim(text, [
@@ -145,17 +183,44 @@ export class UI {
     ], { duration: 1600, fill: 'forwards' })
   }
 
-  showRageMessage() {
-    const msg = RAGE_MESSAGES[Math.floor(Math.random() * RAGE_MESSAGES.length)]
-    const el  = this._el.rageMsg
+  showFall(drop) {
+    const pool = drop >= 150 ? HUGE_FALLS : drop >= 40 ? MID_FALLS : SMALL_FALLS
+    const msg  = pool[Math.floor(Math.random() * pool.length)]
+
+    const el = this._el.rageMsg
+    if (el) {
+      el.textContent = msg
+      this._anim(el, [
+        { opacity: '0', transform: 'translate(-50%,-50%) scale(0.4) rotate(-8deg)' },
+        { opacity: '1', transform: 'translate(-50%,-50%) scale(1.12) rotate(2deg)', offset: 0.15 },
+        { opacity: '1', transform: 'translate(-50%,-50%) scale(1) rotate(0deg)', offset: 0.55 },
+        { opacity: '0', transform: 'translate(-50%,-50%) scale(0.88) rotate(-2deg)' }
+      ], { duration: 2400, fill: 'forwards' })
+    }
+
+    // Rub it in with the exact metres lost
+    const lh = this._el.lostHeight
+    if (lh) {
+      lh.textContent = `−${Math.round(drop)}m`
+      this._anim(lh, [
+        { opacity: '0', transform: 'translate(-50%,0) translateY(-10px)' },
+        { opacity: '1', transform: 'translate(-50%,0) translateY(0)', offset: 0.2 },
+        { opacity: '1', transform: 'translate(-50%,0) translateY(6px)', offset: 0.7 },
+        { opacity: '0', transform: 'translate(-50%,0) translateY(24px)' }
+      ], { duration: 2600, fill: 'forwards' })
+    }
+  }
+
+  showNewBest() {
+    const el = this._el.milestone
     if (!el) return
-    el.textContent = msg
+    el.textContent = '🌟 NEW PERSONAL BEST!'
     this._anim(el, [
-      { opacity: '0', transform: 'translate(-50%,-50%) scale(0.4) rotate(-8deg)' },
-      { opacity: '1', transform: 'translate(-50%,-50%) scale(1.12) rotate(2deg)', offset: 0.15 },
-      { opacity: '1', transform: 'translate(-50%,-50%) scale(1) rotate(0deg)', offset: 0.55 },
-      { opacity: '0', transform: 'translate(-50%,-50%) scale(0.88) rotate(-2deg)' }
-    ], { duration: 2400, fill: 'forwards' })
+      { opacity: '0', transform: 'translate(-50%,-50%) scale(0.4)' },
+      { opacity: '1', transform: 'translate(-50%,-50%) scale(1.35)', offset: 0.3 },
+      { opacity: '1', transform: 'translate(-50%,-50%) scale(1.0)',  offset: 0.6 },
+      { opacity: '0', transform: 'translate(-50%,-50%) scale(0.8)' }
+    ], { duration: 2600, fill: 'forwards' })
   }
 
   showZoneMessage(name) {
@@ -187,6 +252,7 @@ export class UI {
     const el = this._el.milestone
     if (!el) return
     el.textContent = meters >= 2000 ? '🏆 SUMMIT!' : `${meters}m!`
+    this.sound?.milestone()
     this._anim(el, [
       { opacity: '0', transform: 'translate(-50%,-50%) scale(0.4)' },
       { opacity: '1', transform: 'translate(-50%,-50%) scale(1.35)', offset: 0.3 },
@@ -195,17 +261,26 @@ export class UI {
     ], { duration: 2000, fill: 'forwards' })
   }
 
-  updateCompass(nextCheckpointPos, playerPos, cameraCtrl) {
+  showMuteState(muted) {
+    const el = this._el.muteIndicator
+    if (!el) return
+    el.textContent = muted ? '🔇 MUTED' : '🔊 SOUND ON'
+    this._anim(el, [
+      { opacity: '1' }, { opacity: '1', offset: 0.7 }, { opacity: '0' }
+    ], { duration: 1500, fill: 'forwards' })
+  }
+
+  updateCompass(targetPos, playerPos, cameraCtrl) {
     const el    = this._el.compassEl
     const arrow = this._el.compassArrow
     const dist  = this._el.compassDist
-    if (!el || !nextCheckpointPos) { if (el) el.style.opacity = '0'; return }
+    if (!el || !targetPos) { if (el) el.style.opacity = '0'; return }
 
     el.style.opacity = '1'
-    const angle = cameraCtrl.getScreenAngleTo(nextCheckpointPos, playerPos)
+    const angle = cameraCtrl.getScreenAngleTo(targetPos, playerPos)
     if (arrow) arrow.style.transform = `rotate(${angle}deg)`
 
-    const d = playerPos.distanceTo(nextCheckpointPos)
+    const d = playerPos.distanceTo(targetPos)
     if (dist) dist.textContent = d < 999 ? `${Math.round(d)}m` : ''
   }
 
@@ -221,14 +296,21 @@ export class UI {
 
     if (this._el.heightLabel)  this._el.heightLabel.textContent  = `${Math.floor(y)}m`
     if (this._el.heightFill)   this._el.heightFill.style.width   = `${pct}%`
-    if (this._el.deathsStat)   this._el.deathsStat.textContent   = `💀 ${player.deathCount}`
+    if (this._el.fallsStat)    this._el.fallsStat.textContent    = `💀 ${player.fallCount} falls`
+
+    // PB tick on the height bar
+    if (this._el.heightBest && this._bestHeight > 0) {
+      const bp = Math.min(100, (this._bestHeight / world.totalHeight) * 100)
+      this._el.heightBest.style.left = `${bp}%`
+      this._el.heightBest.style.display = 'block'
+    }
 
     const zi = world.getZoneForHeight(y)
     if (this._el.zoneName) this._el.zoneName.textContent = world.getZoneName(zi)
 
     // Timer
     if (this._timerStart !== null) {
-      this._elapsed = (performance.now() - this._timerStart) / 1000
+      this._elapsed = this.elapsed
       const mins = Math.floor(this._elapsed / 60)
       const secs = Math.floor(this._elapsed % 60).toString().padStart(2, '0')
       if (this._el.timerEl) this._el.timerEl.textContent = `${mins}:${secs}`
@@ -245,20 +327,11 @@ export class UI {
       this._el.speedEl.style.color = `rgb(${r},${g},80)`
     }
 
-    // Respawn shield indicator
-    if (this._el.shieldEl) {
-      if (player.isRespawnSafe) {
-        this._el.shieldEl.classList.add('active')
-      } else {
-        this._el.shieldEl.classList.remove('active')
-      }
-    }
-
-    // Compass to next checkpoint — reuse Vector3 to avoid allocation
-    const nextCp = world.getNextUncollectedCheckpoint(player.checkpointIndex)
-    if (cameraCtrl && nextCp) {
+    // Compass → next crown above current height (guides re-climbs too)
+    const guide = world.getGuideCrown(player.position.y)
+    if (cameraCtrl && guide) {
       this._playerV3.set(player.position.x, player.position.y, player.position.z)
-      this.updateCompass(nextCp.position, this._playerV3, cameraCtrl)
+      this.updateCompass(guide.position, this._playerV3, cameraCtrl)
     } else if (this._el.compassEl) {
       this._el.compassEl.style.opacity = '0'
     }

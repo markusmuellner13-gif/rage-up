@@ -2,25 +2,29 @@ import * as THREE from 'three'
 import * as CANNON from 'cannon-es'
 
 const RADIUS           = 0.55
-const GROUND_FORCE     = 36    // was 28 — snappier, more responsive
-const AIR_FORCE        = 14    // was 10 — better air control
-const JUMP_VEL         = 16.5
+const GROUND_FORCE     = 38
+const AIR_FORCE        = 15
+const JUMP_VEL         = 16    // base jump ≈ 4.6m, perfect hold-jump ≈ 6.1m
 const JUMP_HOLD_FORCE  = 13
 const JUMP_HOLD_DURATION = 0.24
 const MAX_SPEED        = 20
-const COYOTE_TIME      = 0.20  // slightly more generous
-const JUMP_BUFFER_TIME = 0.18  // press Space up to 180ms before landing
+const COYOTE_TIME      = 0.15
+const JUMP_BUFFER_TIME = 0.15
+
+// Manual horizontal damping (linearDamping is 0 so jump arcs are deterministic)
+const DAMP_GROUND_IDLE = 6.0   // crisp stop when you release input
+const DAMP_GROUND_MOVE = 0.7
+const DAMP_AIR         = 0.18
 
 export class Player {
-  constructor(scene, physicsWorld, physMats) {
+  constructor(scene, physicsWorld, physMats, sound) {
     this.scene  = scene
     this.world  = physicsWorld
-    this.deathCount      = 0
-    this.checkpointIndex = 0
-    this.checkpointPos   = new THREE.Vector3(0, 2, 0)
+    this.sound  = sound
+    this.fallCount = 0          // big falls suffered
 
     this._grounded       = false
-    this._groundedTimer  = 0
+    this._coyoteTimer    = 0
     this._jumpBufferTimer= 0
     this._jumpHoldTimer  = 0
     this._jumpHolding    = false
@@ -28,17 +32,23 @@ export class Player {
     this._faceState      = 'normal'
     this._prevFaceState  = ''
     this._prevSpeedGlow  = false
-    this._faceTimer      = 0   // seconds
+    this._faceTimer      = 0
     this._speed          = 0
     this._launchCooldown = 0
-    this._respawnTimer   = 0   // brief invincibility after respawn
     this._wasGrounded    = false
-    this._landingEffectDue = false
+    this._peakY          = 3    // highest point since last grounded — fall measurement
 
-    // Reusable Vec3s — eliminates per-frame GC allocations
-    this._fv  = new CANNON.Vec3() // movement force
-    this._jv  = new CANNON.Vec3() // jump hold force
-    this._wv  = new CANNON.Vec3() // wind (used externally too)
+    // Set fresh each frame for Game to consume
+    this.lastLanding   = null  // { drop, impact }
+    this.standingBody  = null  // physics body underfoot (crumble detection)
+
+    // Reusable scratch objects — zero per-frame allocations
+    this._fv  = new CANNON.Vec3()
+    this._jv  = new CANNON.Vec3()
+    this._rayFrom   = new CANNON.Vec3()
+    this._rayTo     = new CANNON.Vec3()
+    this._rayResult = new CANNON.RaycastResult()
+    this._rayOpts   = { collisionFilterMask: 1, skipBackfaces: true }
 
     this._buildPhysics(physMats)
     this._buildMesh()
@@ -47,34 +57,57 @@ export class Player {
   }
 
   _buildPhysics(physMats) {
-    const mat = physMats?.ball || new CANNON.Material({ friction: 0.6, restitution: 0.25 })
+    const mat = physMats?.ball || new CANNON.Material({ friction: 0.6, restitution: 0.05 })
     this.body = new CANNON.Body({
       mass: 1,
       shape: new CANNON.Sphere(RADIUS),
       material: mat,
-      linearDamping: 0.30,
+      linearDamping: 0,       // deterministic jump heights; horizontal damping is manual
       angularDamping: 0.55,
       allowSleep: false
     })
+    // Group 2 so the ground-check ray (mask 1) never hits the player itself
+    this.body.collisionFilterGroup = 2
+    this.body.collisionFilterMask  = -1
     this.body.position.set(0, 3, 0)
     this.world.addBody(this.body)
+  }
 
-    this.body.addEventListener('collide', evt => {
-      const contact = evt.contact
-      const n = contact.ni.clone()
-      if (contact.bj === this.body) n.negate()
-      if (n.y > 0.4) {
-        if (this._jumpBufferTimer > 0) {
-          this._doJump()
-        } else {
-          this._grounded = true
-          this._groundedTimer = COYOTE_TIME
-          // Trigger landing dust on next update (so Effects reference is available)
-          if (!this._wasGrounded) this._landingEffectDue = true
-        }
-        this._wasGrounded = true
+  // Grounding via contact scan + downward ray. The old collide-event approach
+  // missed persistent contacts (cannon only fires 'collide' for NEW pairs),
+  // which made jumps unreliable after standing still.
+  _checkGrounded() {
+    let grounded = false
+    let standBody = null
+
+    // A contact on the ball's lower hemisphere means we're standing on it.
+    // (ri/rj are offsets from each body's center to the contact point —
+    // unambiguous, unlike the normal whose sign depends on body order.)
+    const contacts = this.world.contacts
+    for (let i = 0; i < contacts.length; i++) {
+      const c = contacts[i]
+      if (c.bi === this.body) {
+        if (c.ri.y < -RADIUS * 0.5) { grounded = true; standBody = c.bj; break }
+      } else if (c.bj === this.body) {
+        if (c.rj.y < -RADIUS * 0.5) { grounded = true; standBody = c.bi; break }
       }
-    })
+    }
+
+    if (!grounded) {
+      const p = this.body.position
+      this._rayFrom.set(p.x, p.y, p.z)
+      this._rayTo.set(p.x, p.y - (RADIUS + 0.22), p.z)
+      this._rayResult.reset()
+      if (this.world.raycastClosest(this._rayFrom, this._rayTo, this._rayOpts, this._rayResult)) {
+        if (this._rayResult.hitNormalWorld.y > 0.4) {
+          grounded = true
+          standBody = this._rayResult.body
+        }
+      }
+    }
+
+    this.standingBody = standBody
+    return grounded
   }
 
   _buildMesh() {
@@ -84,7 +117,6 @@ export class Player {
     this._faceCtx = this._faceCanvas.getContext('2d')
     this._faceTex = new THREE.CanvasTexture(this._faceCanvas)
 
-    // Reduced segments: 32→20 saves ~60% triangle count on the ball
     const geo = new THREE.SphereGeometry(RADIUS, 20, 20)
     this.mat = new THREE.MeshStandardMaterial({
       color: 0xff5533,
@@ -96,7 +128,6 @@ export class Player {
     this.mesh.castShadow = true
     this.scene.add(this.mesh)
 
-    // 3D eyes — reduced segments
     const eyeGeo = new THREE.SphereGeometry(0.09, 7, 7)
     const eyeMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.1 })
     this._eyeL = new THREE.Mesh(eyeGeo, eyeMat)
@@ -106,7 +137,6 @@ export class Player {
     this.mesh.add(this._eyeL)
     this.mesh.add(this._eyeR)
 
-    // Draw initial face
     this._drawFace()
   }
 
@@ -134,33 +164,46 @@ export class Player {
   _doJump() {
     this.body.velocity.y    = JUMP_VEL
     this._grounded          = false
-    this._groundedTimer     = 0
+    this._coyoteTimer       = 0
     this._jumpBufferTimer   = 0
     this._jumpHoldTimer     = JUMP_HOLD_DURATION
     this._jumpHolding       = true
-    this._wasGrounded       = false
+    this.sound?.jump()
   }
 
   update(dt, inputState, world, camera, effects) {
-    // Coyote time countdown
-    if (this._groundedTimer > 0) {
-      this._groundedTimer -= dt
-      if (this._groundedTimer <= 0) {
-        this._grounded    = false
-        this._wasGrounded = false
+    this.lastLanding = null
+
+    // ── Grounding ──
+    const groundedNow = this._checkGrounded()
+    if (groundedNow) {
+      if (!this._wasGrounded) {
+        // Landed: measure the fall
+        const y      = this.body.position.y
+        const drop   = this._peakY - y
+        const impact = Math.abs(this._lastVelY)
+        this.lastLanding = { drop, impact }
+        if (impact > 4 && effects) {
+          effects.spawnLandingDust(this.body.position.x, y - RADIUS, this.body.position.z)
+        }
+        this.sound?.land(Math.min(1, impact / 30))
       }
+      this._grounded    = true
+      this._coyoteTimer = COYOTE_TIME
+      this._peakY       = this.body.position.y
+    } else {
+      this._coyoteTimer -= dt
+      if (this._coyoteTimer <= 0) this._grounded = false
+      this._peakY = Math.max(this._peakY, this.body.position.y)
     }
+    this._wasGrounded = groundedNow
 
-    // Jump buffer countdown
+    // ── Jump buffer + execute ──
     if (this._jumpBufferTimer > 0) this._jumpBufferTimer -= dt
+    if (inputState.jump) this._jumpBufferTimer = JUMP_BUFFER_TIME
+    if (this._jumpBufferTimer > 0 && this._grounded) this._doJump()
 
-    // Queue / execute jump
-    if (inputState.jump) {
-      this._jumpBufferTimer = JUMP_BUFFER_TIME
-      if (this._grounded) this._doJump()
-    }
-
-    // Variable jump height
+    // Variable jump height — hold Space for extra lift
     if (this._jumpHolding && inputState.jumpHeld && this._jumpHoldTimer > 0 && this.body.velocity.y > 0) {
       this._jv.set(0, JUMP_HOLD_FORCE, 0)
       this.body.applyForce(this._jv, this.body.position)
@@ -168,39 +211,49 @@ export class Player {
     }
     if (!inputState.jumpHeld) this._jumpHolding = false
 
-    // Camera-relative movement
+    // ── Camera-relative movement ──
     const forward = camera ? camera.getForwardDir() : _V3_FWD
     const right   = camera ? camera.getRightDir()   : _V3_RIGHT
 
     const forceMag = this._grounded ? GROUND_FORCE : AIR_FORCE
-    const fx = (forward.x * inputState.forward + right.x * inputState.right) * forceMag
-    const fz = (forward.z * inputState.forward + right.z * inputState.right) * forceMag
+    let fx = (forward.x * inputState.forward + right.x * inputState.right) * forceMag
+    let fz = (forward.z * inputState.forward + right.z * inputState.right) * forceMag
 
-    const hspeed = Math.sqrt(this.body.velocity.x ** 2 + this.body.velocity.z ** 2)
+    const vx = this.body.velocity.x, vz = this.body.velocity.z
+    const hspeed = Math.sqrt(vx * vx + vz * vz)
     this._speed = hspeed
-    if (hspeed < MAX_SPEED) {
+
+    if (fx !== 0 || fz !== 0) {
+      // At max speed, strip only the force component that would speed us up
+      // further — braking and steering always work (the old code blocked both).
+      if (hspeed > MAX_SPEED) {
+        const nx = vx / hspeed, nz = vz / hspeed
+        const along = fx * nx + fz * nz
+        if (along > 0) { fx -= along * nx; fz -= along * nz }
+      }
       this._fv.set(fx, 0, fz)
       this.body.applyForce(this._fv, this.body.position)
     }
 
-    // Launch cooldown
-    if (this._launchCooldown > 0) this._launchCooldown -= dt
+    // ── Manual horizontal damping ──
+    const hasInput = inputState.forward !== 0 || inputState.right !== 0
+    const k = !groundedNow ? DAMP_AIR : (hasInput ? DAMP_GROUND_MOVE : DAMP_GROUND_IDLE)
+    const damp = Math.exp(-k * dt)
+    this.body.velocity.x *= damp
+    this.body.velocity.z *= damp
+    if (groundedNow && !hasInput) {
+      this.body.angularVelocity.x *= damp
+      this.body.angularVelocity.z *= damp
+    }
 
-    // Respawn protection countdown
-    if (this._respawnTimer > 0) this._respawnTimer -= dt
+    if (this._launchCooldown > 0) this._launchCooldown -= dt
 
     // Sync mesh to physics
     this.mesh.position.copy(this.body.position)
     this.mesh.quaternion.copy(this.body.quaternion)
 
-    // Landing dust (deferred one frame so effects ref is available)
-    if (this._landingEffectDue && effects && Math.abs(this._lastVelY) > 4) {
-      const p = this.body.position
-      effects.spawnLandingDust(p.x, p.y - RADIUS, p.z)
-      this._landingEffectDue = false
-    } else {
-      this._landingEffectDue = false
-    }
+    // Fall whoosh intensity (downward speed)
+    this.sound?.setFallSpeed(Math.max(0, -this.body.velocity.y))
 
     this._updateTrail()
     this._updateShadow()
@@ -229,7 +282,6 @@ export class Player {
       this._trailColors[i * 3 + 1] = t < 0.5 ? t * 2 : 1.0 - (t - 0.5) * 2
       this._trailColors[i * 3 + 2] = t < 0.25 ? 1.0 - t * 4 : 0
     }
-    // Pad remaining slots
     for (let i = this._trailPoints.length; i < this._trailMaxLen; i++) {
       const last = this._trailPoints[this._trailPoints.length - 1]
       if (!last) continue
@@ -254,12 +306,10 @@ export class Player {
   _updateFace(dt) {
     const vy = this.body.velocity.y
 
-    // Determine target face state
     let state
     if (this._faceTimer > 0) {
       this._faceTimer -= dt
       if (this._faceTimer <= 0) { this._faceTimer = 0; this._faceState = 'normal' }
-      // Allow scared to override even during checkpoint celebration
       state = (vy < -12) ? 'scared' : this._faceState
     } else {
       state = vy < -10 ? 'scared' : 'normal'
@@ -268,7 +318,6 @@ export class Player {
 
     const speedGlowOn = this._speed / MAX_SPEED > 0.6
 
-    // Only redraw when something actually changed — eliminates 12 canvas redraws/sec
     if (state !== this._prevFaceState || speedGlowOn !== this._prevSpeedGlow) {
       this._prevFaceState = state
       this._prevSpeedGlow = speedGlowOn
@@ -286,7 +335,6 @@ export class Player {
 
     ctx.clearRect(0, 0, size, size)
 
-    // Base ball gradient
     const grad = ctx.createRadialGradient(100, 90, 20, 128, 128, 130)
     if (state === 'scared') {
       grad.addColorStop(0, '#ffaa44'); grad.addColorStop(1, '#cc3300')
@@ -300,14 +348,12 @@ export class Player {
     ctx.fillStyle = grad
     ctx.beginPath(); ctx.arc(128, 128, 124, 0, Math.PI * 2); ctx.fill()
 
-    // Shine highlight
     const shine = ctx.createRadialGradient(90, 75, 5, 95, 80, 50)
     shine.addColorStop(0, 'rgba(255,255,255,0.55)')
     shine.addColorStop(1, 'rgba(255,255,255,0)')
     ctx.fillStyle = shine
     ctx.beginPath(); ctx.ellipse(95, 80, 40, 30, -0.4, 0, Math.PI * 2); ctx.fill()
 
-    // Eyes
     const eyeOffX = Math.max(-8, Math.min(8, this.body.velocity.x * 0.7))
     const eyeOffY = state === 'scared' ? -6 : 0
     const eyeRx   = state === 'scared' ? 23 : 18
@@ -330,14 +376,12 @@ export class Player {
     }
     drawEye(90, 105); drawEye(166, 105)
 
-    // Eyebrows for scared state
     if (state === 'scared') {
       ctx.strokeStyle = '#333'; ctx.lineWidth = 5; ctx.lineCap = 'round'
       ctx.beginPath(); ctx.moveTo(68,  80); ctx.lineTo(114, 90); ctx.stroke()
       ctx.beginPath(); ctx.moveTo(144, 90); ctx.lineTo(190, 80); ctx.stroke()
     }
 
-    // Mouth
     ctx.strokeStyle = '#222'; ctx.lineWidth = 4; ctx.lineCap = 'round'
     ctx.beginPath()
     if (state === 'scared') {
@@ -357,7 +401,7 @@ export class Player {
   setCheckpointFace(duration = 2) {
     this._faceState      = 'checkpoint'
     this._faceTimer      = duration
-    this._prevFaceState  = '' // force redraw
+    this._prevFaceState  = ''
     this._drawFace()
   }
 
@@ -370,31 +414,27 @@ export class Player {
     )
     this._launchCooldown = 2.0
     this._grounded       = false
-    this._groundedTimer  = 0
+    this._coyoteTimer    = 0
     this._wasGrounded    = false
   }
 
-  get position()      { return this.body.position }
-  get speed()         { return this._speed }
-  get isRespawnSafe() { return this._respawnTimer > 0 }
+  get position() { return this.body.position }
+  get speed()    { return this._speed }
 
-  respawnAt(pos) {
-    this.body.position.set(pos.x, pos.y + 2, pos.z)
+  // Emergency reset only (fell out of the world) — NOT a checkpoint respawn
+  resetToStart() {
+    this.body.position.set(0, 3, 0)
     this.body.velocity.set(0, 0, 0)
     this.body.angularVelocity.set(0, 0, 0)
-    this.deathCount++
-    this._trailPoints     = []
-    this._jumpBufferTimer = 0
-    this._groundedTimer   = 0
-    this._grounded        = false
-    this._wasGrounded     = false
-    this._respawnTimer    = 1.2 // 1.2s of fall protection after respawn
+    this._peakY = 3
+    this._trailPoints = []
   }
 
   setPosition(x, y, z) {
-    this.body.position.set(x, y + 2, z)
+    this.body.position.set(x, y + 1.2, z)
     this.body.velocity.set(0, 0, 0)
     this.body.angularVelocity.set(0, 0, 0)
+    this._peakY = y + 1.2
   }
 
   dispose() {

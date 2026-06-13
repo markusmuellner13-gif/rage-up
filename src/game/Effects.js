@@ -7,10 +7,11 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js'
 const MAX_PARTICLES = 220
 
 export class Effects {
-  constructor(renderer, scene, camera) {
+  constructor(renderer, scene, camera, sound) {
     this.renderer = renderer
     this.scene = scene
     this.camera = camera
+    this.sound = sound
     this._time = 0
     this._lightningTimer = 0
 
@@ -182,6 +183,7 @@ export class Effects {
   triggerLightning() {
     this._flash('rgba(200,180,255,0.58)', 80)
     setTimeout(() => this._flash('rgba(200,180,255,0.28)', 60), 120)
+    this.sound?.thunder()
   }
 
   _flash(color, dur) {

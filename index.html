@@ -110,7 +110,13 @@
     #height-bar-bg {
       width: clamp(160px, 40vw, 320px); height: 8px;
       background: rgba(0,0,0,0.5); border-radius: 4px;
-      border: 1px solid rgba(255,255,255,0.25); overflow: hidden;
+      border: 1px solid rgba(255,255,255,0.25); position: relative;
+    }
+    /* Personal-best tick on the height bar */
+    #height-bar-best {
+      position: absolute; top: -3px; bottom: -3px; width: 3px;
+      background: #ffd700; box-shadow: 0 0 6px #ffd700;
+      border-radius: 1px; display: none; transform: translateX(-50%);
     }
     #height-bar-fill {
       height: 100%; background: linear-gradient(90deg, #4caf50, #ffeb3b, #ff5722);
@@ -362,14 +368,27 @@
       text-shadow: 0 0 40px #ffd700; opacity: 0; pointer-events: none; text-align: center;
     }
 
-    /* ── RESPAWN SHIELD INDICATOR ── */
-    #respawn-shield {
-      position: absolute; bottom: 80px; left: 50%; transform: translateX(-50%);
-      color: rgba(0,229,255,0.7); font-size: clamp(10px, 2vw, 13px); font-weight: 700;
-      letter-spacing: 2px; opacity: 0; pointer-events: none;
-      transition: opacity 0.3s;
+    /* ── LOST HEIGHT (after a fall) ── */
+    #lost-height {
+      position: absolute; top: 50%; left: 50%; transform: translate(-50%,0);
+      color: #ff6b6b; font-size: clamp(18px, 4.5vw, 36px); font-weight: 900;
+      text-shadow: 0 0 20px rgba(255,0,0,0.6); letter-spacing: 1px;
+      opacity: 0; pointer-events: none;
+      font-variant-numeric: tabular-nums;
     }
-    #respawn-shield.active { opacity: 1; }
+
+    /* ── MUTE INDICATOR ── */
+    #mute-indicator {
+      position: absolute; top: 84px; left: 16px;
+      color: rgba(255,255,255,0.6); font-size: clamp(10px, 2vw, 13px);
+      font-weight: 700; letter-spacing: 1px; opacity: 0; pointer-events: none;
+    }
+
+    /* ── VIGNETTE ── */
+    #vignette {
+      position: absolute; inset: 0; pointer-events: none;
+      background: radial-gradient(ellipse at center, transparent 52%, rgba(0,0,0,0.38) 100%);
+    }
 
     @media (max-width: 600px) {
       #controls-hint { display: none; }
@@ -394,15 +413,18 @@
     <div id="speed-indicator">0 km/h</div>
     <div id="pause-hint">ESC — PAUSE</div>
 
+    <div id="vignette"></div>
+
     <div id="height-meter">
       <div id="height-label">0m</div>
-      <div id="height-bar-bg"><div id="height-bar-fill"></div></div>
+      <div id="height-bar-bg"><div id="height-bar-fill"></div><div id="height-bar-best"></div></div>
     </div>
     <div id="zone-name">THE GARDEN</div>
 
     <div id="stats">
-      <div class="stat" id="checkpoint-stat">☑ 0 / ?</div>
-      <div class="stat" id="deaths">💀 0</div>
+      <div class="stat" id="checkpoint-stat">👑 0 / ?</div>
+      <div class="stat" id="best-stat">⬆ best 0m</div>
+      <div class="stat" id="deaths">💀 0 falls</div>
     </div>
 
     <div id="screen-flash"></div>
@@ -412,7 +434,8 @@
     <div id="zone-announce">ENTERING<span>THE GARDEN</span></div>
     <div id="milestone">100m!</div>
     <div id="launch-message">🚀 LAUNCH!</div>
-    <div id="respawn-shield">PROTECTED</div>
+    <div id="lost-height"></div>
+    <div id="mute-indicator"></div>
 
     <div id="compass">
       <div id="compass-arrow">▲</div>
@@ -424,6 +447,7 @@
       <div class="legend-item"><div class="legend-dot" style="background:#b3e5fc"></div>ICE — slippery</div>
       <div class="legend-item"><div class="legend-dot" style="background:#ffd54f"></div>CLOUD — bouncy</div>
       <div class="legend-item"><div class="legend-dot" style="background:#ce93d8"></div>GHOST — fades</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#6d3b1e"></div>EMBER — crumbles!</div>
       <div class="legend-item"><div class="legend-dot" style="background:#00e5ff"></div>LAUNCH — fly!</div>
     </div>
 
@@ -434,39 +458,41 @@
     </div>
 
     <div id="controls-hint">
-      WASD / ARROWS — MOVE<br>SPACE — JUMP &nbsp;|&nbsp; MOUSE — LOOK<br>ESC — PAUSE
+      WASD / ARROWS — MOVE<br>SPACE — JUMP (HOLD = HIGHER) &nbsp;|&nbsp; MOUSE — LOOK<br>ESC — PAUSE &nbsp;|&nbsp; M — MUTE
     </div>
   </div>
 
   <!-- Pause Screen -->
   <div id="pause-screen">
     <h2>PAUSED</h2>
+    <div id="pause-stats" class="pause-sub" style="text-align:center;line-height:2;"></div>
     <div style="display:flex;flex-direction:column;gap:10px;width:220px;">
       <button class="pause-btn" id="resume-btn">▶ RESUME</button>
       <button class="pause-btn" id="quit-btn">↩ QUIT</button>
     </div>
-    <div class="pause-sub">ESC to resume</div>
+    <div class="pause-sub">ESC to resume · progress is saved</div>
   </div>
 
   <!-- Start Screen -->
   <div id="start-screen">
     <h1>RAGE UP</h1>
-    <div class="subtitle">The Impossible Climb</div>
+    <div class="subtitle">No checkpoints. No mercy.</div>
     <div class="instructions">
       <p>
-        Roll your ball <strong>2000m to the top</strong> of the world.<br/><br/>
+        Climb <strong>2000m to the summit</strong>.<br/>
+        <strong style="color:#ff7755">If you fall, you FALL.</strong> All the way down, if gravity wants.<br/><br/>
         <span class="key">W A S D</span> or <span class="key">↑ ↓ ← →</span> &nbsp;Move<br/>
-        <span class="key">SPACE</span> &nbsp;Jump &nbsp;(hold for higher!)<br/>
-        <span class="key">MOUSE</span> &nbsp;Rotate camera &nbsp;|&nbsp; <span class="key">ESC</span> &nbsp;Pause<br/><br/>
-        Physics-based. <em>Momentum is everything.</em><br/>
-        Fall too far → respawn at last checkpoint.
+        <span class="key">SPACE</span> &nbsp;Jump — <em>hold it for extra height</em><br/>
+        <span class="key">MOUSE</span> &nbsp;Camera &nbsp;|&nbsp; <span class="key">ESC</span> &nbsp;Pause &nbsp;|&nbsp; <span class="key">M</span> &nbsp;Mute<br/><br/>
+        👑 Collect crowns. The golden ring marks your all-time best —<br/>climb past it.
+        Your position is saved when you quit. Falls are forever.
       </p>
     </div>
     <div class="start-btns">
       <button id="start-btn">START CLIMBING</button>
-      <button id="continue-btn">CONTINUE</button>
+      <button id="continue-btn">CONTINUE CLIMB</button>
     </div>
-    <p class="warning-text">⚠ This game WILL make you rage. You have been warned.</p>
+    <p class="warning-text">⚠ This game WILL make you rage. That's the point.</p>
   </div>
 
   <!-- Win Screen -->

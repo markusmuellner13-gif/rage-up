@@ -80,9 +80,12 @@ const ZONE_DEFS = [
     decoChance: 0.25, decoType: 'shard'
   },
   {
-    name: 'COSMIC SUMMIT', minY: 1400, maxY: 2050,
+    name: 'COSMIC SUMMIT', minY: 1400, maxY: 2000,
+    // 120 platforms over 600m = 5.0m rise per platform: needs a held jump
+    // (max ≈ 6.1m) but is always physically possible. The old 6.2m rise was
+    // borderline impossible.
     skyTop: 0x000011, skyBot: 0x000033, fog: 0x000022, fogFar: 230,
-    platforms: 105, minW: 2.5, maxW: 8, minD: 2.5, maxD: 8,
+    platforms: 120, minW: 2.5, maxW: 8, minD: 2.5, maxD: 8,
     hGap: [7, 17], vGap: [6, 13], typeWeights: [0.28, 0.24, 0.10, 0.14, 0.04, 0.12, 0.08],
     bodyColor: 0x1a1a4e, topColor: 0x3949ab,
     ambColor: 0x1a237e, sunColor: 0x7986cb, ambient: 0.22,
@@ -103,15 +106,19 @@ export class World {
     this._decorations  = []
     this._rng          = mkRng(0xc0ffee42)
     this._time         = 0
+    this._bodyMap      = new Map() // body.id → platform (crumble lookups)
+    this._pbRing       = null
 
     this.ballMat   = new CANNON.Material('ball')
     this.groundMat = new CANNON.Material('ground')
     this.iceMat    = new CANNON.Material('ice')
     this.bounceMat = new CANNON.Material('bounce')
 
-    this.physicsWorld.addContactMaterial(new CANNON.ContactMaterial(this.ballMat, this.groundMat, { friction: 0.62, restitution: 0.22 }))
-    this.physicsWorld.addContactMaterial(new CANNON.ContactMaterial(this.ballMat, this.iceMat,    { friction: 0.02, restitution: 0.08 }))
-    this.physicsWorld.addContactMaterial(new CANNON.ContactMaterial(this.ballMat, this.bounceMat, { friction: 0.5,  restitution: 1.5  }))
+    // Near-zero restitution on ground/ice: landings are sticky and predictable
+    // (every death must feel like the player's fault, not a random bounce)
+    this.physicsWorld.addContactMaterial(new CANNON.ContactMaterial(this.ballMat, this.groundMat, { friction: 0.62,  restitution: 0.03 }))
+    this.physicsWorld.addContactMaterial(new CANNON.ContactMaterial(this.ballMat, this.iceMat,    { friction: 0.015, restitution: 0.0  }))
+    this.physicsWorld.addContactMaterial(new CANNON.ContactMaterial(this.ballMat, this.bounceMat, { friction: 0.5,   restitution: 1.35 }))
   }
 
   get physMats() { return { ball: this.ballMat } }
@@ -245,13 +252,14 @@ export class World {
     group.add(bodyMesh)
 
     if (type !== 2 && type !== 4) {
-      const topColor = type === 3 ? 0x212121 : type === 5 ? 0xf48fb1 : zone.topColor
+      const topColor = type === 3 ? 0x3e2723 : type === 5 ? 0xf48fb1 : zone.topColor
       const topH   = h * 0.22
       const topGeo = new THREE.BoxGeometry(w * 0.88, topH, d * 0.88)
       const topMat = new THREE.MeshStandardMaterial({
         color: topColor, roughness: 0.65,
-        emissive: type === 5 ? 0xaa44aa : 0x000000,
-        emissiveIntensity: type === 5 ? 0.3 : 0
+        // Crumble platforms glow faint ember-red so they're telegraphed
+        emissive: type === 5 ? 0xaa44aa : type === 3 ? 0x661100 : 0x000000,
+        emissiveIntensity: type === 5 ? 0.3 : type === 3 ? 0.45 : 0
       })
       const topMesh = new THREE.Mesh(topGeo, topMat)
       topMesh.position.y    = h * 0.39
@@ -285,7 +293,25 @@ export class World {
       disappearPhase: this._rng() * Math.PI * 2
     }
     this.platforms.push(plat)
+    this._bodyMap.set(body.id, plat)
     return plat
+  }
+
+  getPlatformForBody(body) {
+    return body ? this._bodyMap.get(body.id) || null : null
+  }
+
+  // Called by Game with the body the player is standing on.
+  // Returns the platform if this contact just armed a crumble (for SFX).
+  notifyStanding(body) {
+    if (!body) return null
+    const plat = this._bodyMap.get(body.id)
+    if (plat && plat.type === 3 && !plat.crumbleTrigger) {
+      plat.crumbleTrigger = true
+      plat.crumbleTimer   = 0
+      return plat
+    }
+    return null
   }
 
   _makeCheckpoint(x, y, z, zoneIdx) {
@@ -473,34 +499,73 @@ export class World {
 
   // ── Queries ──────────────────────────────────────────────────────────────
 
-  getCheckpoint(index) {
-    const i = Math.max(0, Math.min(index, this.checkpoints.length - 1))
-    return this.checkpoints[i]
+  get crownsCollected() {
+    let n = 0
+    for (const cp of this.checkpoints) if (cp.collected) n++
+    return n
   }
 
-  getNextUncollectedCheckpoint(fromIndex) {
-    for (let i = fromIndex; i < this.checkpoints.length; i++) {
-      if (!this.checkpoints[i].collected) return this.checkpoints[i]
+  // Next uncollected crown at or above the player's height — guidance for
+  // both fresh progress and the climb back up after a fall
+  getGuideCrown(y) {
+    for (const cp of this.checkpoints) {
+      if (!cp.collected && cp.position.y > y - 2) return cp
     }
     return null
   }
 
-  checkPlayerCheckpoints(playerBody, playerCheckpointIndex) {
+  markCollected(index) {
+    const cp = this.checkpoints[index]
+    if (!cp || cp.collected) return
+    cp.collected = true
+    this._dimCrown(cp)
+  }
+
+  _dimCrown(cp) {
+    cp.mesh.material.color.set(0x9aa0a6)
+    cp.mesh.material.emissive.set(0x333333)
+    cp.mesh.material.emissiveIntensity = 0.25
+    cp.mesh.position.y = cp.position.y
+    cp.mesh.scale.setScalar(0.55)
+    cp.ring.visible  = false
+    cp.ring2.visible = false
+    cp.light.intensity = 0
+  }
+
+  // Crowns can be collected in any order (falls make progress non-linear)
+  checkPlayerCrowns(playerBody) {
     const pos = playerBody.position
-    // Only check a small window ahead — avoids iterating the whole list
-    const end = Math.min(playerCheckpointIndex + 6, this.checkpoints.length)
-    for (let i = playerCheckpointIndex; i < end; i++) {
-      const cp = this.checkpoints[i]
+    for (const cp of this.checkpoints) {
       if (cp.collected) continue
-      const dx = pos.x - cp.position.x
       const dy = pos.y - cp.position.y
+      if (dy > 5 || dy < -5) continue
+      const dx = pos.x - cp.position.x
       const dz = pos.z - cp.position.z
       if (dx * dx + dy * dy + dz * dz < 25) { // 5² = 25
         cp.collected = true
+        this._dimCrown(cp)
         return cp
       }
     }
     return null
+  }
+
+  // Golden ring floating at the player's all-time best height — the thing
+  // you stare at from below and swear you'll reach again
+  setBestHeightMarker(y) {
+    if (y < 15) {
+      if (this._pbRing) this._pbRing.visible = false
+      return
+    }
+    if (!this._pbRing) {
+      const geo = new THREE.TorusGeometry(34, 0.35, 8, 64)
+      const mat = new THREE.MeshBasicMaterial({ color: 0xffd700, transparent: true, opacity: 0.45, fog: false })
+      this._pbRing = new THREE.Mesh(geo, mat)
+      this._pbRing.rotation.x = Math.PI / 2
+      this.scene.add(this._pbRing)
+    }
+    this._pbRing.visible = true
+    this._pbRing.position.set(0, y, 0)
   }
 
   checkPlayerLaunchPads(playerBody) {
@@ -538,6 +603,39 @@ export class World {
         }
       }
 
+      // Crumble platform lifecycle: shake → drop+fade → gone → respawn
+      if (plat.type === 3 && plat.crumbleTrigger) {
+        plat.crumbleTimer += dt
+        const t = plat.crumbleTimer
+        if (t < 0.45) {
+          plat.mesh.position.x = plat.x + (Math.random() - 0.5) * 0.14
+          plat.mesh.position.z = plat.z + (Math.random() - 0.5) * 0.14
+        } else if (t < 1.7) {
+          if (plat.body.collisionFilterGroup !== 0) {
+            // Group 0 too, not just mask — otherwise the player's ground-check
+            // ray (mask 1) still detects the invisible body as solid floor.
+            plat.body.collisionFilterGroup = 0
+            plat.body.collisionFilterMask  = 0
+            plat.mesh.position.set(plat.x, plat.y, plat.z)
+          }
+          const f = t - 0.45
+          plat.mesh.position.y = plat.y - f * f * 14
+          plat.mesh.children.forEach(c => {
+            if (c.material) { c.material.transparent = true; c.material.opacity = Math.max(0, 1 - f * 1.1) }
+          })
+        } else if (t < 6) {
+          if (plat.mesh.visible) plat.mesh.visible = false
+        } else {
+          plat.crumbleTrigger = false
+          plat.crumbleTimer   = 0
+          plat.mesh.visible   = true
+          plat.mesh.position.set(plat.x, plat.y, plat.z)
+          plat.mesh.children.forEach(c => { if (c.material) c.material.opacity = 1 })
+          plat.body.collisionFilterGroup = 1
+          plat.body.collisionFilterMask  = -1
+        }
+      }
+
       if (plat.type === 5) {
         // Distance cull disappearing platform animation
         const dx = plat.x - playerPos.x
@@ -553,15 +651,10 @@ export class World {
       }
     }
 
-    // Checkpoint animations — distance culled
+    // Crown animations — distance culled. Collected crowns stay visible
+    // (dimmed silver) as wayfinding markers for the climb back up.
     for (const cp of this.checkpoints) {
-      if (cp.collected) {
-        if (cp.mesh.visible) {
-          cp.mesh.visible  = cp.ring.visible  = cp.ring2.visible = false
-          cp.light.intensity = 0
-        }
-        continue
-      }
+      if (cp.collected) continue
 
       const dx = cp.position.x - playerPos.x
       const dy = cp.position.y - playerPos.y

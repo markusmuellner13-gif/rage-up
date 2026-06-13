@@ -3,9 +3,9 @@ import { Game } from './game/Game.js'
 window.addEventListener('DOMContentLoaded', () => {
   const canvas = document.getElementById('game-canvas')
 
-  // Show "Continue" button if there's a saved checkpoint
+  // Show "Continue" button if there's a saved position
   try {
-    const saved = localStorage.getItem('rage-up-cp')
+    const saved = localStorage.getItem('rageup-save-v2')
     if (saved) {
       const btn = document.getElementById('continue-btn')
       if (btn) btn.style.display = 'block'
